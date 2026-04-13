@@ -19,10 +19,17 @@ ObligationType = Literal["고유 책무", "공통 책무"]
 
 
 @dataclass
+class RawParagraph:
+    text: str
+    is_bold: bool = False
+
+
+@dataclass
 class RawCell:
     text: str
     is_bold: bool = False
     nested_tables: list["RawTable"] = field(default_factory=list)
+    paragraphs: list[RawParagraph] = field(default_factory=list)
 
 
 @dataclass
