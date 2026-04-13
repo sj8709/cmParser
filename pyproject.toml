@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "chaekmu-parser"
+version = "0.1.0"
+description = "책무기술서 파싱 파이프라인 - 금융회사 책무기술서(DOCX/HWP/PDF) -> 통일 JSON -> XLSX"
+requires-python = ">=3.10"
+dependencies = [
+    "python-docx>=1.1.0",
+    "openpyxl>=3.1.0",
+    "pyhwp>=0.1b15",
+    "pdfplumber>=0.11.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-cov>=4.1",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]

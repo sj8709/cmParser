@@ -1,0 +1,37 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Virtual env
+.venv/
+venv/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Fixtures: 실제 원본 파일은 커밋하지 않음 (저작권/기밀)
+fixtures/*/input.*
+fixtures/*/*.docx
+fixtures/*/*.hwp
+fixtures/*/*.hwpx
+fixtures/*/*.pdf
+fixtures/*/*.xlsx
+
+# Build output
+dist/
+build/
+*.egg
+
+# Runtime output
+output/
+logs/
