@@ -28,8 +28,8 @@ def test_worker_produces_done_message_with_output_path(tmp_path):
         template_path=template_path(),
     )
     t = run_pipeline_async(req, q)
-    t.join(timeout=30)
-    assert not t.is_alive(), "워커가 30초 내에 종료되지 않음"
+    t.join(timeout=60)
+    assert not t.is_alive(), "워커가 60초 내에 종료되지 않음"
 
     messages = []
     while not q.empty():
@@ -44,6 +44,11 @@ def test_worker_produces_done_message_with_output_path(tmp_path):
     assert done_msg.output_path is not None
     assert done_msg.output_path.exists()
     assert done_msg.output_path.name == output_filename(FIXTURE)
+    # validator 결과도 첨부되어야 함
+    assert done_msg.validation_report is not None
+    assert done_msg.validation_report.passed, (
+        f"IBK 기본 검증이 실패: {done_msg.validation_report.summary_line()}"
+    )
 
 
 def test_worker_reports_error_for_missing_input(tmp_path):

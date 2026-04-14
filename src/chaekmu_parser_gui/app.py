@@ -14,7 +14,9 @@ from tkinter import filedialog
 
 import customtkinter as ctk
 
+from chaekmu_parser.validator import ValidationReport
 from chaekmu_parser_gui.logging_setup import current_log_file, setup_logging
+from chaekmu_parser_gui.report_window import ReportWindow
 from chaekmu_parser_gui.workers import (
     PipelineRequest,
     StatusMessage,
@@ -44,6 +46,7 @@ class MainWindow(ctk.CTk):
         self._output_dir = ctk.StringVar(value=str(DEFAULT_OUTPUT_DIR))
         self._status_queue: queue.Queue[StatusMessage] = queue.Queue()
         self._last_output: Path | None = None
+        self._last_report: ValidationReport | None = None
         self._running = False
 
         self._build_layout()
@@ -129,12 +132,17 @@ class MainWindow(ctk.CTk):
         row = ctk.CTkFrame(parent, fg_color="transparent")
         row.pack(fill="x")
         self._open_folder_btn = ctk.CTkButton(
-            row, text="📂 결과 폴더 열기", width=160, state="disabled",
+            row, text="📂 결과 폴더", width=130, state="disabled",
             command=self._on_open_folder,
         )
         self._open_folder_btn.pack(side="left")
+        self._report_btn = ctk.CTkButton(
+            row, text="🔍 검증 리포트", width=140, state="disabled",
+            command=self._on_open_report,
+        )
+        self._report_btn.pack(side="left", padx=(8, 0))
         log_btn = ctk.CTkButton(
-            row, text="📝 로그 파일 열기", width=150, fg_color="gray50", hover_color="gray40",
+            row, text="📝 로그 파일", width=130, fg_color="gray50", hover_color="gray40",
             command=self._on_open_log,
         )
         log_btn.pack(side="left", padx=(8, 0))
@@ -195,7 +203,10 @@ class MainWindow(ctk.CTk):
                 self._log_line(msg.text)
                 if msg.level == "done":
                     self._last_output = msg.output_path
+                    self._last_report = msg.validation_report
                     self._open_folder_btn.configure(state="normal")
+                    if msg.validation_report is not None:
+                        self._report_btn.configure(state="normal")
                     self._set_running(False)
                     return
                 if msg.level == "error":
@@ -225,10 +236,15 @@ class MainWindow(ctk.CTk):
     def _on_open_log(self) -> None:
         log_path = current_log_file()
         if not log_path.exists():
-            # 아직 기록된 로그가 없으면 폴더만 열기
             os.startfile(str(log_path.parent))
             return
         os.startfile(str(log_path))
+
+    def _on_open_report(self) -> None:
+        if self._last_report is None:
+            return
+        win = ReportWindow(self, self._last_report)
+        win.after(50, win.focus_force)
 
     def _on_reset(self) -> None:
         if self._running:

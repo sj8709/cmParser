@@ -17,6 +17,7 @@ from typing import Literal
 
 from chaekmu_parser.extractors.docx_extractor import DocxExtractor
 from chaekmu_parser.normalizer import normalize
+from chaekmu_parser.validator import ValidationReport, validate
 from chaekmu_parser.xlsx_writer import write
 from chaekmu_parser_gui.logging_setup import friendly_error, get_logger
 
@@ -28,6 +29,7 @@ class StatusMessage:
     level: Level
     text: str
     output_path: Path | None = None
+    validation_report: ValidationReport | None = None
 
 
 @dataclass(frozen=True)
@@ -102,8 +104,23 @@ def _run_pipeline(request: PipelineRequest, q: "queue.Queue[StatusMessage]") -> 
         out_path = request.output_dir / output_filename(request.input_path)
         write(parsed, request.template_path, out_path)
         log.info("wrote %s", out_path)
+
+        # 3단계 정합성 검증 — 실패해도 파일 저장은 유지
+        report: ValidationReport | None = None
+        try:
+            report = validate(parsed, raw, source_path=request.input_path)
+            log.info("validation: %s", report.summary_line())
+            level = "warn" if not report.passed or report.has_warnings else "ok"
+            q.put(StatusMessage(level, f"🔍 {report.summary_line()}"))
+        except Exception as ve:
+            log.exception("validation step failed")
+            q.put(StatusMessage("warn", f"⚠ 검증 단계 실패 (변환 성공): {ve}"))
+
         q.put(StatusMessage(
-            "done", f"✓ 저장 완료: {out_path.name}", output_path=out_path
+            "done",
+            f"✓ 저장 완료: {out_path.name}",
+            output_path=out_path,
+            validation_report=report,
         ))
     except Exception as e:
         log.exception("pipeline failed")
