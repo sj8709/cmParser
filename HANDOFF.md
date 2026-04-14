@@ -70,16 +70,38 @@
 - [x] `xlsx_writer.py` — 템플릿 복제, delta 기반 행 조정, 각주/헤더 보존, wrap_text + auto-fit
 - [x] `tests/test_e2e_ibk.py` — DOCX 원본 기준 왕복 검증 11개 (expected.xlsx 비교 배제)
 
-**Phase 1 사후 확장 (완료, 2026-04-14):**
+**Phase 1 사후 확장 (완료, 2026-04-14, 커밋 `519c7f2`):**
 - [x] classifier 번호 체계 방어적 확장 — `①-⑳` 외에도 `⑴-⒇`/`⒈-⒛`/`1.`/`가.`/`Ⅰ.` 6종 인식
 - [x] normalizer 3-mode 파서 — `bold`(IBK) / `tag`(라이나) / `number`(폴백)
 - [x] `tests/test_obligation_variants.py` — 모드 감지·스플리터·통합 테스트 16개
 
-**Phase 2 (대기/진행 중):**
+**Phase 1.5 — 데스크톱 GUI + 배포 (완료, 2026-04-14, 커밋 `ad5c73b`):**
+- [x] `src/chaekmu_parser_gui/` — customtkinter 기반 단일 파일 변환 GUI
+  - `app.py` MainWindow, `workers.py` 백그라운드 스레드 + 큐 통신
+  - `logging_setup.py` 일 단위 로그 + `friendly_error()` 한국어 오류 메시지
+- [x] `build/gui.spec` + `scripts/build_exe.ps1` — PyInstaller --onedir 원샷 빌드
+- [x] `docs/읽어보세요.txt` — 비개발자 배포용 SmartScreen 안내
+- [x] 산출물: `dist/chaekmu-parser-v0.1.0-win64.zip` (17MB)
+- [x] 설계 문서: `claudedocs/gui_packaging_design.md`
+
+**Phase 2a — validator 3단계 정합성 검증 (완료, 2026-04-14, 커밋 `e6e2d76`):**
+- [x] `src/chaekmu_parser/validator.py` — Stage 1 재추출 비교 / Stage 2 parsed→raw substring / Stage 3 SequenceMatcher quick_ratio
+- [x] `ValidationReport` 자료구조 — 이슈 리스트 + 단계별 카운트 + `passed`/`has_warnings` 속성 + `summary_line()`
+- [x] GUI 연동: 워커가 write 후 자동 호출 → 로그에 한 줄 요약 → `[🔍 검증 리포트]` 버튼 → `ReportWindow` Toplevel
+- [x] `tests/test_validator.py` 9개 + `tests/test_gui_report_window.py` 2개, IBK 실측 통과 (Stage1 누락 < 1%, Stage2 verify ≥ 60, Stage3 ≈ 84%)
+
+**Phase 2b — HWP (대기):**
 - [ ] `extractors/hwp_extractor.py` — pyhwp 기반, 독립 회의체 테이블 지원. **라이나 fixture 제공 전까지 블록됨**
 - [ ] `normalizer.py` 라이나 variant handler — 표 수 3→4 대응 (COMMITTEE 독립 테이블을 그룹화 로직에 흡수)
-- [ ] `validator.py` — 3단계 정합성 검증 (HANDOFF §5.4: raw↔원본, parsed↔raw substring, 역재조립 유사도)
+- [ ] `validator.py` Stage 1 HWP 경로 — 현재 docx만 지원 (`_extract_source_fragments`에서 `fmt == "docx"`만 분기)
 - [ ] `tests/test_laina_e2e.py` — 라이나 HWP → XLSX 왕복 검증
+
+**Phase 2 잔여 안전장치 (Phase 2b 착수 전 권장):**
+- [ ] `build/gui.spec` hiddenimports에 `chaekmu_parser.validator` 명시 추가
+- [ ] `xlsx_writer.py` delete_rows 음수 행 방지 guard (`if delete_at < 1: raise`)
+- [ ] `app.py` ReportWindow 중복 참조 해제 (이전 창 destroy)
+- [ ] `app.py` `os.startfile` 비-Windows 가드 (기능 Windows 전용이나 크래시 방지)
+- [ ] `app.py` `_poll_status_queue` 폴링 최대 시간 guard (5분)
 
 **Phase 3 (샘플 유입 시):**
 - [ ] `extractors/pdf_extractor.py` — pdfplumber
@@ -97,7 +119,7 @@ Core (시드 2개로 확정, 이후 변경 없음)
 ├─ extractors/base.py     ← 인터페이스 불변
 ├─ classifier.py          ← 법령 라벨 기반, 완화만 허용
 ├─ normalizer.py          ← 통일 JSON 스키마 불변
-├─ validator.py (Phase 2)
+├─ validator.py           ← Phase 2a 구현 완료 (Stage 1은 docx 한정)
 └─ xlsx_writer.py
 
 Add-on (포맷/회사 추가 시 확장)
@@ -120,11 +142,19 @@ Add-on (포맷/회사 추가 시 확장)
 정합성 검증 위해 가공 전(raw 셀 텍스트)과 가공 후(parsed 필드)를 분리 저장.
 `Responsibility.raw_law_reg`, `Responsibility.source(SourceRef)` 등.
 
-### 5.4 3단계 정합성 검증 (Phase 2에서 구현)
+### 5.4 3단계 정합성 검증 (Phase 2a 구현 완료)
 
-1. raw ↔ 원본 파일 재추출 글자 단위 비교
-2. parsed 조각이 raw에 substring으로 존재 + 누락 탐지
-3. parsed 역재조립 후 raw와 유사도 비교
+`src/chaekmu_parser/validator.py` — `validate(parsed, raw, source_path)` → `ValidationReport`.
+
+1. **Stage 1** raw ↔ 원본 파일 재추출 글자 단위 비교 (현재 docx만 지원, HWP/PDF는 Phase 2b/3 확장)
+2. **Stage 2** parsed 조각이 raw에 substring으로 존재 + 누락 탐지
+3. **Stage 3** parsed 역재조립 후 raw와 `SequenceMatcher.quick_ratio()` 유사도 비교
+
+**임계치** (validator.py 상단 상수):
+- Stage 1 누락률: 1% 경고 / 5% 오류
+- Stage 3 유사도: 55% 경고 / 30% 오류 (IBK 기준 84% 통과)
+
+GUI는 워커가 write 후 자동 호출 → `🔍 요약 라인` 로그 출력 → `[검증 리포트]` 버튼으로 `ReportWindow` 상세 뷰.
 
 ---
 
@@ -216,11 +246,44 @@ C:\project\workspace\chaekmu-parser\HANDOFF.md 읽고 이어서 진행.
 - xlsx_writer: 템플릿 복제 + delta 기반 행 조정, 버그 2종 수정 (각주 B열 보호 / 상위 섹션 삽입 후 하위 좌표 shift 누락)
 - wrap_text + 행 높이 초기화로 Excel auto-fit 유도
 
-**완료 — Phase 1 사후 확장 (미커밋, 이 세션 말미 커밋 예정):**
+**완료 — Phase 1 사후 확장 (커밋 `519c7f2`):**
 - classifier `PATTERN_OBLIGATION_NUMBER` — `①` 외에 5종 추가 인식 (`⑴/⒈/1./가./Ⅰ.`)
 - normalizer `_parse_obligation` → 3-mode auto-detect (`bold`/`tag`/`number`) + `_split_by_*` 스플리터 분리
 - `_resolve_obligation_type` 우선순위 통합: CEO → 태그 → 위치·키워드 → 기본
 - 테스트 16개 추가, 전체 59/59 통과
+
+**완료 — Phase 1.5 데스크톱 GUI + 배포 (커밋 `ad5c73b`):**
+- customtkinter 기반 `chaekmu_parser_gui/` 패키지 (app/workers/logging_setup + assets)
+- `PipelineRequest` + `queue.Queue` 백그라운드 워커 패턴
+- 일 단위 로그 로테이션(`%LOCALAPPDATA%`) + `friendly_error()` 한국어 오류 메시지
+- PyInstaller `--onedir` 빌드 → **17MB zip** (목표 100~120MB 대비 압도적 절감)
+- `docs/읽어보세요.txt` SmartScreen 안내 포함
+- 전체 67/67 통과 (GUI 테스트 8 추가)
+- 설계 문서: `claudedocs/gui_packaging_design.md` §11 확정 사항 기록
+
+**완료 — Phase 2a validator 3단계 정합성 검증 (커밋 `e6e2d76`):**
+- `src/chaekmu_parser/validator.py` — Stage 1 재추출 비교(docx), Stage 2 parsed→raw substring, Stage 3 quick_ratio 유사도
+- `ValidationReport` + 단계별 카운트 + `summary_line()`
+- GUI 연동: 워커가 write 후 자동 호출 → 로그 요약 → `[🔍 검증 리포트]` 버튼 → `ReportWindow` Toplevel
+- IBK 실측: Stage1 누락 < 1%, Stage2 verify ≥ 60 (누락 0), Stage3 ≈ 84% (기준 55% 상회)
+- 전체 78/78 통과
+
+**결정:**
+- **회귀 기준 변경**: `expected.xlsx`(사용자 수동 작성본)가 DOCX 원본에서 법령/어미를 편집한 것으로 확인 → **셀 단위 비교 배제**, **DOCX 원본 충실 반영**만 검증 (`test_e2e_ibk.py`)
+- 관리의무 번호 체계 다양성(#미해결 질문 3번)은 **라이나 fixture 유입 전 방어적 확장으로 선반영** (사용자 승인)
+- GUI: **customtkinter + PyInstaller --onedir** 채택. Streamlit/tkinter 기본/PyQt 기각
+- 배포는 **1차: 사용자가 수동 전달용**, 추후 사용 확대되면 코드 서명 재검토
+- Stage 3 유사도 임계치: **55% 경고 / 30% 오류** 유지 (IBK 84% 기준)
+
+**대기:**
+- 사용자: 라이나 HWP 샘플 파일 경로 + 포맷(.hwp/.hwpx) 확인
+- Phase 1 공식 종료 조건(생성 XLSX를 ICR Java 파서에 실소비) 미검증
+- Phase 2 잔여 안전장치 5개 (HANDOFF §4.2 "Phase 2 잔여 안전장치" 참고)
+
+**다음 세션 진입 시:**
+1. `HANDOFF.md` + `CLAUDE.md` 교차 확인
+2. `git log --oneline -10`으로 최근 변경 확인
+3. 안전장치 5개 처리 or Phase 2b HWP 진입 중 선택 (라이나 fixture 의존성 확인)
 
 **결정:**
 - **회귀 기준 변경**: `expected.xlsx`(사용자 수동 작성본)가 DOCX 원본에서 법령/어미를 편집한 것으로 확인 → **셀 단위 비교 배제**, **DOCX 원본 충실 반영**만 검증 (`test_e2e_ibk.py`)

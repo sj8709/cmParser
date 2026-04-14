@@ -23,7 +23,7 @@ README는 짧은 개요. 설계 문서는 저장소 외부 `C:\Users\uesr\Deskto
 | 1 | DOCX extractor + classifier + normalizer + xlsx_writer, IBK E2E | 완료 (`2dc0d03`) |
 | 1.5 | 관리의무 번호 체계 방어적 확장 (라이나 선반영) | 완료 (`519c7f2`) |
 | 1.9 | 데스크톱 GUI(customtkinter) + PyInstaller 번들 | 완료 (`ad5c73b`) — `dist/chaekmu-parser-v0.1.0-win64.zip` 17MB |
-| 2a | `validator.py` 3단계 검증 + GUI 리포트 뷰어 | 진행 중 (미커밋) — DOCX Stage 1 구현, HWP Stage 1은 Phase 2b에서 확장 |
+| 2a | `validator.py` 3단계 검증 + GUI 리포트 뷰어 | 완료 (`e6e2d76`) — DOCX Stage 1 구현, HWP Stage 1은 Phase 2b에서 확장 |
 | 2b | HWP extractor(pyhwp) + 라이나 E2E | 예정 |
 | 3 | PDF extractor 및 신규 회사 add-on | 샘플 유입 시 |
 
@@ -74,7 +74,7 @@ pwsh scripts/build_exe.ps1
 # 디버깅용 덤프
 python scripts/dump_docx.py               # DOCX 원본 구조
 python scripts/dump_xlsx.py               # XLSX 출력 검수
-python scripts/debug_marketing_gamsa.py   # 특정 임원(마케팅감사) 블록 디버깅
+# scripts/debug_*.py 는 .gitignore됨 (1회용 애드혹 스크립트 관례)
 ```
 
 Python 3.10 이상 필요. Windows 환경 기준이며, Claude Code에서 도구 호출 시엔 Unix 스타일 경로를 쓸 것.
