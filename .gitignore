@@ -30,6 +30,7 @@ fixtures/*/*.xlsx
 # Build output
 dist/
 build/
+!build/gui.spec
 *.egg
 
 # Runtime output

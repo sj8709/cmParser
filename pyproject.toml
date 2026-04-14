@@ -19,6 +19,15 @@ dev = [
     "pytest>=8.0",
     "pytest-cov>=4.1",
 ]
+gui = [
+    "customtkinter>=5.2.0",
+]
+build = [
+    "pyinstaller>=6.0",
+]
+
+[project.scripts]
+chaekmu-parser-gui = "chaekmu_parser_gui.__main__:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
