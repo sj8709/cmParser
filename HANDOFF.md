@@ -96,12 +96,13 @@
 - [ ] `validator.py` Stage 1 HWP 경로 — 현재 docx만 지원 (`_extract_source_fragments`에서 `fmt == "docx"`만 분기)
 - [ ] `tests/test_laina_e2e.py` — 라이나 HWP → XLSX 왕복 검증
 
-**Phase 2 잔여 안전장치 (Phase 2b 착수 전 권장):**
-- [ ] `build/gui.spec` hiddenimports에 `chaekmu_parser.validator` 명시 추가
-- [ ] `xlsx_writer.py` delete_rows 음수 행 방지 guard (`if delete_at < 1: raise`)
-- [ ] `app.py` ReportWindow 중복 참조 해제 (이전 창 destroy)
-- [ ] `app.py` `os.startfile` 비-Windows 가드 (기능 Windows 전용이나 크래시 방지)
-- [ ] `app.py` `_poll_status_queue` 폴링 최대 시간 guard (5분)
+**Phase 2 잔여 안전장치 (완료, 커밋 `cdf4fc0`):**
+- [x] S1: `build/gui.spec` hiddenimports에 `chaekmu_parser.validator` 명시
+- [x] S2: `xlsx_writer._adjust_block`의 `delete_at < 1 or >= footer_row` → `ValueError`
+- [x] S3: `app.py` `self._report_window` 참조 관리 — 기존 창 살아있으면 lift/focus, 새 파이프라인 완료 시 이전 창 destroy
+- [x] S4: `_open_in_file_manager()` — Win/macOS/Linux 플랫폼 분기 + 실패 시 로그만
+- [x] S5: `_POLL_MAX_TICKS=3000` (5분) 폴링 타임아웃 + 안내 메시지
+- [x] `tests/test_safety_guards.py` 4개 (S2/S4/S5 단위)
 
 **Phase 3 (샘플 유입 시):**
 - [ ] `extractors/pdf_extractor.py` — pdfplumber
@@ -267,6 +268,11 @@ C:\project\workspace\chaekmu-parser\HANDOFF.md 읽고 이어서 진행.
 - GUI 연동: 워커가 write 후 자동 호출 → 로그 요약 → `[🔍 검증 리포트]` 버튼 → `ReportWindow` Toplevel
 - IBK 실측: Stage1 누락 < 1%, Stage2 verify ≥ 60 (누락 0), Stage3 ≈ 84% (기준 55% 상회)
 - 전체 78/78 통과
+
+**완료 — Phase 2 착수 전 안전장치 S1~S5 (커밋 `cdf4fc0`):**
+- S1 gui.spec validator hiddenimport / S2 xlsx delete_at 가드 / S3 ReportWindow 참조 관리 /
+  S4 파일 탐색기 플랫폼 분기 / S5 폴링 5분 타임아웃
+- 전체 83/83 통과, `dist/chaekmu-parser-v0.1.0-win64.zip` 재생성 (17MB 유지)
 
 **결정:**
 - **회귀 기준 변경**: `expected.xlsx`(사용자 수동 작성본)가 DOCX 원본에서 법령/어미를 편집한 것으로 확인 → **셀 단위 비교 배제**, **DOCX 원본 충실 반영**만 검증 (`test_e2e_ibk.py`)
