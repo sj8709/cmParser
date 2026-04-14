@@ -221,6 +221,12 @@ def _adjust_block(
         )
     elif delta < 0:
         delete_at = last_data_row + delta + 1
+        # delete_at < 1 이면 시트 손상, >= footer_row 이면 footer 자체를 덮음
+        if delete_at < 1 or delete_at >= footer_row:
+            raise ValueError(
+                f"delete_rows 좌표 이상: delete_at={delete_at}, "
+                f"last_data_row={last_data_row}, footer_row={footer_row}, delta={delta}"
+            )
         ws.delete_rows(delete_at, -delta)
 
 

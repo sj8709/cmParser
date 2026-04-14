@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import os
 import queue
+import subprocess
+import sys
 from pathlib import Path
 from tkinter import filedialog
 
@@ -30,6 +32,10 @@ WINDOW_SIZE = "680x620"
 
 DEFAULT_OUTPUT_DIR = Path.home() / "Desktop"
 
+# 큐 폴링: 100ms 주기 × 최대 횟수 = 타임아웃. 워커가 말없이 사망하는 이론적 상황 방어.
+_POLL_INTERVAL_MS = 100
+_POLL_MAX_TICKS = 3000  # 5분
+
 
 class MainWindow(ctk.CTk):
     def __init__(self) -> None:
@@ -47,7 +53,9 @@ class MainWindow(ctk.CTk):
         self._status_queue: queue.Queue[StatusMessage] = queue.Queue()
         self._last_output: Path | None = None
         self._last_report: ValidationReport | None = None
+        self._report_window: ReportWindow | None = None
         self._running = False
+        self._poll_ticks = 0
 
         self._build_layout()
 
@@ -193,10 +201,12 @@ class MainWindow(ctk.CTk):
             template_path=tpl,
         )
         run_pipeline_async(request, self._status_queue)
-        self.after(100, self._poll_status_queue)
+        self._poll_ticks = 0
+        self.after(_POLL_INTERVAL_MS, self._poll_status_queue)
 
     def _poll_status_queue(self) -> None:
-        """워커 → UI 큐 폴링. 100ms 주기로 메시지 소진 후 재등록."""
+        """워커 → UI 큐 폴링. 100ms 주기로 메시지 소진 후 재등록. 최대 _POLL_MAX_TICKS 회 후 타임아웃."""
+        self._poll_ticks += 1
         try:
             while True:
                 msg = self._status_queue.get_nowait()
@@ -204,6 +214,10 @@ class MainWindow(ctk.CTk):
                 if msg.level == "done":
                     self._last_output = msg.output_path
                     self._last_report = msg.validation_report
+                    # 새 결과가 도착했으므로 이전 리포트 창은 폐기 (다음 클릭 시 새 창)
+                    if self._report_window is not None and self._report_window.winfo_exists():
+                        self._report_window.destroy()
+                    self._report_window = None
                     self._open_folder_btn.configure(state="normal")
                     if msg.validation_report is not None:
                         self._report_btn.configure(state="normal")
@@ -216,7 +230,14 @@ class MainWindow(ctk.CTk):
             pass
 
         if self._running:
-            self.after(100, self._poll_status_queue)
+            if self._poll_ticks >= _POLL_MAX_TICKS:
+                self._log_line(
+                    f"⚠ 변환이 {_POLL_MAX_TICKS * _POLL_INTERVAL_MS // 1000}초 내에 "
+                    "완료되지 않음. 중단합니다. 입력 파일이 과도하게 크거나 내부 오류 가능성."
+                )
+                self._set_running(False)
+                return
+            self.after(_POLL_INTERVAL_MS, self._poll_status_queue)
 
     def _set_running(self, running: bool) -> None:
         self._running = running
@@ -231,20 +252,23 @@ class MainWindow(ctk.CTk):
     def _on_open_folder(self) -> None:
         target = self._last_output.parent if self._last_output else Path(self._output_dir.get())
         if target.exists():
-            os.startfile(str(target))  # noqa: S606 (Windows 전용)
+            _open_in_file_manager(target, self)
 
     def _on_open_log(self) -> None:
         log_path = current_log_file()
-        if not log_path.exists():
-            os.startfile(str(log_path.parent))
-            return
-        os.startfile(str(log_path))
+        target = log_path if log_path.exists() else log_path.parent
+        _open_in_file_manager(target, self)
 
     def _on_open_report(self) -> None:
         if self._last_report is None:
             return
-        win = ReportWindow(self, self._last_report)
-        win.after(50, win.focus_force)
+        # 이전 창이 살아있으면 재사용 (재활성화), 아니면 새로 생성
+        if self._report_window is not None and self._report_window.winfo_exists():
+            self._report_window.lift()
+            self._report_window.focus_force()
+            return
+        self._report_window = ReportWindow(self, self._last_report)
+        self._report_window.after(50, self._report_window.focus_force)
 
     def _on_reset(self) -> None:
         if self._running:
@@ -284,3 +308,16 @@ class MainWindow(ctk.CTk):
         self._log.configure(state="normal")
         self._log.delete("1.0", "end")
         self._log.configure(state="disabled")
+
+
+def _open_in_file_manager(path: Path, window: "MainWindow") -> None:
+    """플랫폼별 파일 탐색기로 path 열기. Windows 전용으로 설계됐지만 타 OS 크래시 방지."""
+    try:
+        if sys.platform == "win32":
+            os.startfile(str(path))  # noqa: S606 — Windows 전용
+        elif sys.platform == "darwin":
+            subprocess.Popen(["open", str(path)])  # noqa: S603,S607
+        else:
+            subprocess.Popen(["xdg-open", str(path)])  # noqa: S603,S607
+    except Exception as e:
+        window._log_line(f"⚠ 열기 실패: {e} (경로: {path})")

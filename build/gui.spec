@@ -26,6 +26,7 @@ a = Analysis(
         "chaekmu_parser_gui.logging_setup",
         "chaekmu_parser.extractors.docx_extractor",
         "chaekmu_parser.normalizer",
+        "chaekmu_parser.validator",
         "chaekmu_parser.xlsx_writer",
         "customtkinter",
         # pyhwp는 Phase 2 착수 후 실제 동작 검증하여 추가 예정
