@@ -39,7 +39,23 @@ PATTERN_COMMITTEE_ROLE    = re.compile(r"위\s*원\s*장|개\s*최|심\s*의|의
 PATTERN_RESP_HEADER       = re.compile(rf"^\s*책\s*무{_FN}$")
 PATTERN_RESP_DETAIL_COLS  = re.compile(r"세\s*부|법\s*령|내\s*규")
 PATTERN_OBLIGATION_TAG    = re.compile(r"<\s*(?:고유|공통)\s*책무\s*>")
-PATTERN_OBLIGATION_NUMBER = re.compile(r"[\u2460-\u2473]")  # ①~⑳
+# 관리의무 번호 체계 — 라인 시작의 번호/자모 접두사 탐지 (OBLIGATION 판정용)
+#   ①-⑳              U+2460-U+2473
+#   ⑴-⒇              U+2474-U+2487 (괄호숫자)
+#   ⒈-⒛              U+2488-U+249B (점숫자)
+#   1. / 1)           아라비아 숫자 + 점/괄호
+#   가. / 가)          한글 자모 단문자 + 점/괄호
+#   Ⅰ. / Ⅱ.          로마 숫자 + 점/괄호
+PATTERN_OBLIGATION_NUMBER = re.compile(
+    r"(?m)^\s*(?:"
+    r"[\u2460-\u2473]"
+    r"|[\u2474-\u2487]"
+    r"|[\u2488-\u249B]"
+    r"|\d+\s*[.)]"
+    r"|[가-힣]\s*[.)]"
+    r"|[ⅠⅡⅢⅣⅤⅥⅦⅧⅨⅩⅪⅫ]\s*[.)]"
+    r")"
+)
 
 
 def _norm(text: str) -> str:

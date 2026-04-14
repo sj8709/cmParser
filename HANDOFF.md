@@ -53,24 +53,37 @@
 
 ## 4. 아직 안 한 것 (Pending)
 
+> 회귀 기준 변경 이력: `fixtures/ibk/expected.json`(ICR Java 파서 덤프) 방식은 폐기되고 `fixtures/ibk/expected.xlsx`(사용자 수동 작성본)로 전환됐으나, 수동 작성본이 DOCX 원문과 달리 법령/어미를 편집한 것으로 확인돼 **셀 단위 비교 대신 `DOCX 원본 ↔ 생성 XLSX` 왕복 검증**을 최종 회귀 기준으로 채택(2026-04-14).
+
 ### 4.1 사용자 측 (AI가 대신 못 함)
 
-- [ ] `fixtures/ibk/input.docx` 배치 (IBK 원본 DOCX 복사)
-- [ ] `fixtures/ibk/expected.json` 생성 (기존 ICR Java 파서로 동일 DOCX 처리 후 JSON 덤프 → 회귀 기준)
-- [ ] venv 생성 + deps 설치
-  ```
-  python -m venv .venv
-  .venv\Scripts\Activate.ps1
-  pip install -e ".[dev]"
-  ```
+- [ ] **Phase 1 공식 종료 검증**: 생성된 `IBK_파이프라인_출력.xlsx`를 ICR Java 파서(`XlsxTemplateParserServiceImpl.java`)에 넣어 기존 결과와 글자 단위 동일 확인
+- [ ] **라이나 HWP 샘플 배치**: `fixtures/laina/input.hwp` + 대응 정답 XLSX (있으면) 제공
+- [ ] **외국인 임원명 사례 확인**: 현재 name 필드는 제약 없이 수용하지만 실측 안 됨 (HANDOFF §8)
+- [ ] **`.hwp` vs `.hwpx` 비율 확인**: pyhwp는 `.hwp`만 지원 (HANDOFF §8 Gotcha #3)
 
-### 4.2 AI 측 (fixture 준비되면 즉시 시작)
+### 4.2 AI 측
 
-- [ ] `extractors/docx_extractor.py` — python-docx 기반, 중첩 테이블/bold 보존
-- [ ] `normalizer.py` — RawDocument → ParsedDocument (IBK 케이스 variant handler 3종)
-- [ ] `xlsx_writer.py` — ParsedDocument → XLSX 템플릿 (openpyxl)
-- [ ] `tests/test_ibk_e2e.py` — fixture 기반 회귀 테스트
-- [ ] Phase 1 종료 조건: IBK DOCX → 생성된 XLSX를 ICR Java 파서에 넣어 기존 결과와 글자 단위 동일 확인
+**Phase 1 (완료, 커밋 `2dc0d03`):**
+- [x] `extractors/docx_extractor.py` — top-level 27개 테이블 + merged cell dedup + 단락별 bold 보존
+- [x] `normalizer.py` — 9임원 그룹화, 라벨 기반 파싱, `등` 제거, 고유/공통 분류
+- [x] `xlsx_writer.py` — 템플릿 복제, delta 기반 행 조정, 각주/헤더 보존, wrap_text + auto-fit
+- [x] `tests/test_e2e_ibk.py` — DOCX 원본 기준 왕복 검증 11개 (expected.xlsx 비교 배제)
+
+**Phase 1 사후 확장 (완료, 2026-04-14):**
+- [x] classifier 번호 체계 방어적 확장 — `①-⑳` 외에도 `⑴-⒇`/`⒈-⒛`/`1.`/`가.`/`Ⅰ.` 6종 인식
+- [x] normalizer 3-mode 파서 — `bold`(IBK) / `tag`(라이나) / `number`(폴백)
+- [x] `tests/test_obligation_variants.py` — 모드 감지·스플리터·통합 테스트 16개
+
+**Phase 2 (대기/진행 중):**
+- [ ] `extractors/hwp_extractor.py` — pyhwp 기반, 독립 회의체 테이블 지원. **라이나 fixture 제공 전까지 블록됨**
+- [ ] `normalizer.py` 라이나 variant handler — 표 수 3→4 대응 (COMMITTEE 독립 테이블을 그룹화 로직에 흡수)
+- [ ] `validator.py` — 3단계 정합성 검증 (HANDOFF §5.4: raw↔원본, parsed↔raw substring, 역재조립 유사도)
+- [ ] `tests/test_laina_e2e.py` — 라이나 HWP → XLSX 왕복 검증
+
+**Phase 3 (샘플 유입 시):**
+- [ ] `extractors/pdf_extractor.py` — pdfplumber
+- [ ] 신규 회사별 variant handler 추가 (Core 수정 금지)
 
 ---
 
@@ -193,25 +206,45 @@ C:\project\workspace\chaekmu-parser\HANDOFF.md 읽고 이어서 진행.
 
 ## 11. 마지막 세션 요약
 
+### 2026-04-14 세션
+
+**완료 — Phase 1 IBK DOCX→XLSX 파이프라인 E2E (커밋 `2dc0d03`):**
+- Step A: 입력/출력 3자 구조 분석 → `claudedocs/ibk_field_mapping.md`
+  - **핵심 발견**: 템플릿 `설정` 시트가 이미 완전한 매핑 스펙 문서
+- DocxExtractor: 27 테이블, merged cell dedup (표A row 4 중첩표 3중 노출 해결), 단락별 bold 보존
+- Normalizer: 3표 단위 임원 그룹화(인덱스 의존 없음), 라벨 기반 파싱, 법령 말미 ` 등` 제거, 공통/고유 분류
+- xlsx_writer: 템플릿 복제 + delta 기반 행 조정, 버그 2종 수정 (각주 B열 보호 / 상위 섹션 삽입 후 하위 좌표 shift 누락)
+- wrap_text + 행 높이 초기화로 Excel auto-fit 유도
+
+**완료 — Phase 1 사후 확장 (미커밋, 이 세션 말미 커밋 예정):**
+- classifier `PATTERN_OBLIGATION_NUMBER` — `①` 외에 5종 추가 인식 (`⑴/⒈/1./가./Ⅰ.`)
+- normalizer `_parse_obligation` → 3-mode auto-detect (`bold`/`tag`/`number`) + `_split_by_*` 스플리터 분리
+- `_resolve_obligation_type` 우선순위 통합: CEO → 태그 → 위치·키워드 → 기본
+- 테스트 16개 추가, 전체 59/59 통과
+
+**결정:**
+- **회귀 기준 변경**: `expected.xlsx`(사용자 수동 작성본)가 DOCX 원본에서 법령/어미를 편집한 것으로 확인 → **셀 단위 비교 배제**, **DOCX 원본 충실 반영**만 검증 (`test_e2e_ibk.py`)
+- 관리의무 번호 체계 다양성(#미해결 질문 3번)은 **라이나 fixture 유입 전 방어적 확장으로 선반영** (사용자 승인)
+
+**대기:**
+- 사용자: 라이나 HWP 샘플 파일 경로 + 포맷(.hwp/.hwpx) 확인
+- Phase 1 공식 종료 조건(생성 XLSX를 ICR Java 파서에 실소비) 미검증
+
+**다음 세션 진입 시:**
+1. `HANDOFF.md` + `CLAUDE.md` 교차 확인
+2. §4.2 Phase 2 목록에서 착수 지점 선택
+3. 라이나 fixture 준비되면 Step A 재실행(`scripts/dump_docx.py` 포맷 유사), 안 되어있으면 `validator.py` 선행 가능
+
+---
+
 ### 2026-04-13 세션
 
 **완료**:
-- 설계 문서 2종 정리
-  - `책무기술서_파이프라인_분석.md`: 상단 읽기 가이드 추가, §8/§9 기각 배너 강화
-  - `라벨분류_정규식_명세_v0.1.md` 신규 작성 (시드 2개 기준)
+- 설계 문서 2종 정리 (`책무기술서_파이프라인_분석.md` §8/§9 기각 배너, `라벨분류_정규식_명세_v0.1.md` 신규)
 - `chaekmu-parser` 프로젝트 스캐폴딩 전체 생성
 - Classifier 10개 테스트 전부 통과 (Python 3.13)
 
 **결정**:
-- 54개 샘플 실측 기다리지 않고 2개 시드로 Core 확정 후 add-on으로 확장 전략
+- 54개 샘플 실측 기다리지 않고 2개 시드로 Core 확정 후 add-on으로 확장
 - 프로젝트 경로 ASCII (`chaekmu-parser`) 채택
-- PDF 지원은 Phase 3 (샘플 유입 시)로 지연
-
-**대기**:
-- 사용자: IBK DOCX 샘플 + expected.json + venv 세팅
-- 준비 완료 신호 오면 DocxExtractor 구현 착수
-
-**미해결 질문 (파일럿 전)**:
-- `.hwp`/`.hwpx` 비율
-- 외국인 임원 이름 표기
-- 관리의무 번호 체계 (①②③ 외 `1.`, `가.` 등 존재 가능)
+- PDF 지원은 Phase 3으로 지연

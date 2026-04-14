@@ -50,6 +50,19 @@ _TRAILING_DEUNG = re.compile(r"(,\s*[^,\n]+?)\s+등(?=\s*$|\s*\n|\s*\|)", re.MUL
 _CEO_PATTERN = re.compile(r"대\s*표\s*이\s*사")
 _COMMON_OBLIG_KEYWORDS = ("내부통제", "관리조치", "수립", "운영", "이행")
 
+# 관리의무 번호 체계 — 라인 시작 접두사 (classifier와 동일 집합)
+_NUMBER_PREFIX = re.compile(
+    r"^\s*("
+    r"[\u2460-\u2473]"
+    r"|[\u2474-\u2487]"
+    r"|[\u2488-\u249B]"
+    r"|\d+\s*[.)]"
+    r"|[가-힣]\s*[.)]"
+    r"|[ⅠⅡⅢⅣⅤⅥⅦⅧⅨⅩⅪⅫ]\s*[.)]"
+    r")\s*"
+)
+_TAG_PATTERN = re.compile(r"<\s*(고유|공통)\s*책무\s*>")
+
 
 def _txt(cell: RawCell) -> str:
     return cell.text.strip() if cell else ""
@@ -255,31 +268,19 @@ def _parse_obligation(
     if not cell.paragraphs:
         return []
 
-    blocks: list[tuple[str, list[str]]] = []
-    current_title: str | None = None
-    current_items: list[str] = []
-    for p in cell.paragraphs:
-        text = p.text.strip()
-        if not text:
-            continue
-        if p.is_bold:
-            if current_title is not None:
-                blocks.append((current_title, current_items))
-            current_title = text
-            current_items = []
-        else:
-            if current_title is None:
-                # bold 제목 나오기 전 선행 텍스트 — 버퍼링
-                current_title = ""
-            current_items.append(text)
-    if current_title is not None:
-        blocks.append((current_title, current_items))
+    mode = _detect_obligation_mode(cell)
+    if mode == "tag":
+        blocks = _split_by_tag(cell.paragraphs)
+    elif mode == "number":
+        blocks = _split_by_number(cell.paragraphs)
+    else:  # "bold" (기본) — IBK 스타일
+        blocks = _split_by_bold(cell.paragraphs)
 
     is_ceo = bool(_CEO_PATTERN.search(position))
     result: list[Obligation] = []
-    for idx, (title, items) in enumerate(blocks):
+    for idx, (explicit_type, title, items) in enumerate(blocks):
         obl_type: ObligationType = _resolve_obligation_type(
-            idx, len(blocks), title, is_ceo
+            explicit_type, idx, len(blocks), title, is_ceo
         )
         result.append(
             Obligation(
@@ -292,11 +293,125 @@ def _parse_obligation(
     return result
 
 
+# 블록 구조: (explicit_type, title, items)
+#   explicit_type: "고유 책무"/"공통 책무" (태그로 명시) 또는 None (위치/키워드로 추론)
+_Block = tuple[str | None, str, list[str]]
+
+
+def _detect_obligation_mode(cell) -> str:
+    """관리의무 셀의 파싱 모드 결정. 우선순위: bold > tag > number."""
+    has_bold = any(p.is_bold and p.text.strip() for p in cell.paragraphs)
+    if has_bold:
+        return "bold"
+    joined = "\n".join(p.text for p in cell.paragraphs)
+    if _TAG_PATTERN.search(joined):
+        return "tag"
+    if any(_NUMBER_PREFIX.match(p.text) for p in cell.paragraphs if p.text.strip()):
+        return "number"
+    return "bold"  # 폴백: 구분자 없는 평문 → 단일 블록으로 처리
+
+
+def _split_by_bold(paragraphs) -> list[_Block]:
+    """IBK 스타일: bold=제목, non-bold=세부."""
+    blocks: list[_Block] = []
+    title: str | None = None
+    items: list[str] = []
+    for p in paragraphs:
+        text = p.text.strip()
+        if not text:
+            continue
+        if p.is_bold:
+            if title is not None:
+                blocks.append((None, title, items))
+            title = text
+            items = []
+        else:
+            if title is None:
+                title = ""
+            items.append(text)
+    if title is not None:
+        blocks.append((None, title, items))
+    return blocks
+
+
+def _split_by_tag(paragraphs) -> list[_Block]:
+    """
+    라이나 스타일: <고유 책무> / <공통 책무> 태그로 타입 구분, 번호 접두어로 항목 구분.
+    각 번호 라인 = 새 블록 (태그 타입 상속).
+    """
+    blocks: list[_Block] = []
+    current_type: str | None = None
+    current_title: str | None = None
+    current_items: list[str] = []
+
+    def flush():
+        nonlocal current_title, current_items
+        if current_title is not None:
+            blocks.append((current_type, current_title, current_items))
+            current_title = None
+            current_items = []
+
+    for p in paragraphs:
+        text = p.text.strip()
+        if not text:
+            continue
+        tag_m = _TAG_PATTERN.search(text)
+        if tag_m:
+            flush()
+            current_type = f"{tag_m.group(1)} 책무"
+            continue
+        num_m = _NUMBER_PREFIX.match(text)
+        if num_m:
+            flush()
+            current_title = text[num_m.end():].strip()
+        else:
+            if current_title is None:
+                current_title = text
+            else:
+                current_items.append(text)
+    flush()
+    return blocks
+
+
+def _split_by_number(paragraphs) -> list[_Block]:
+    """번호 접두어만 있는 스타일 (3사 이상에서 나올 수 있는 폴백). 각 번호 라인 = 블록."""
+    blocks: list[_Block] = []
+    current_title: str | None = None
+    current_items: list[str] = []
+    for p in paragraphs:
+        text = p.text.strip()
+        if not text:
+            continue
+        num_m = _NUMBER_PREFIX.match(text)
+        if num_m:
+            if current_title is not None:
+                blocks.append((None, current_title, current_items))
+            current_title = text[num_m.end():].strip()
+            current_items = []
+        else:
+            if current_title is None:
+                current_title = text
+            else:
+                current_items.append(text)
+    if current_title is not None:
+        blocks.append((None, current_title, current_items))
+    return blocks
+
+
 def _resolve_obligation_type(
-    idx: int, total: int, title: str, is_ceo: bool
+    explicit: str | None, idx: int, total: int, title: str, is_ceo: bool
 ) -> ObligationType:
+    """
+    우선순위:
+      1. 대표이사 → 무조건 "고유 책무"
+      2. 태그로 명시된 타입 → 그대로
+      3. 마지막 블록 + 공통책무 키워드 → "공통 책무"
+      4. 기본 → "고유 책무"
+    """
     if is_ceo:
         return "고유 책무"
+    if explicit in ("고유 책무", "공통 책무"):
+        return explicit  # type: ignore[return-value]
     if idx == total - 1 and _is_common_obligation_title(title):
         return "공통 책무"
     return "고유 책무"
