@@ -70,6 +70,20 @@ chaekmu-parser-gui
 # 실행 파일 빌드 (PyInstaller --onedir + zip 원샷)
 pwsh scripts/build_exe.ps1
 # → dist/chaekmu-parser/ + dist/chaekmu-parser-v<ver>-win64.zip
+# 버전은 src/chaekmu_parser_gui/__init__.py __version__에서 읽음
+
+# 빌드 수동 분해 (spec/zip 단계 개별 확인 필요 시)
+pyinstaller build/gui.spec --clean --noconfirm
+Copy-Item "docs/읽어보세요.txt" "dist/chaekmu-parser/"
+Compress-Archive -Path "dist/chaekmu-parser/*" -DestinationPath "dist/chaekmu-parser-vX.Y.Z-win64.zip" -Force
+
+# 배포용 zip 사용자 측 압축 해제 (사용자 안내용 명령)
+Expand-Archive -Path "$HOME\Desktop\chaekmu-parser-v0.1.0-win64.zip" -DestinationPath "C:\chaekmu-parser" -Force
+& "C:\chaekmu-parser\chaekmu-parser.exe"
+# 주의: chaekmu-parser.exe 단독 이동 금지 — _internal/ 및 templates/ 폴더와 같은 위치여야 동작
+
+# 빌드 중 파일 잠금 오류 시 (이전 실행이 남긴 프로세스)
+taskkill /F /IM chaekmu-parser.exe   # 이후 빌드 재시도
 
 # 디버깅용 덤프
 python scripts/dump_docx.py               # DOCX 원본 구조
