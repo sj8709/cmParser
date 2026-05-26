@@ -7,12 +7,16 @@
    raw 셀 텍스트 어딘가에 실제로 존재하는지 점검. 누락 = 후처리 왜곡 또는 파싱 오류.
 3. **Stage 3 (역재조립 유사도)**: parsed 전체를 문자열로 재조립 후 raw와 유사도 측정.
    낮으면 대규모 누락/중복 가능성.
+4. **Stage 4 (구조 정합성)**: bold-mode 문서에서 책무세부 ↔ 관리의무 제목의 1:1 대응을
+   점검. 세부 0개·미매칭 제목 = 오추출 의심(warn), 대응 제목 없는 책무세부 = 원본 누락
+   추정(info). 태그/번호 모드는 대응 관계가 없으므로 생략.
 
 결과는 `ValidationReport`로 반환. GUI/테스트가 소비.
 """
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from difflib import SequenceMatcher
 from pathlib import Path
@@ -26,7 +30,7 @@ from chaekmu_parser.models import (
 )
 
 Severity = Literal["info", "warn", "error"]
-Stage = Literal[1, 2, 3]
+Stage = Literal[1, 2, 3, 4]
 
 # ---------------------------------------------------------------------------
 # 결과 자료구조
@@ -54,6 +58,10 @@ class ValidationReport:
     # Stage 3
     stage3_similarity: float = 0.0
 
+    # Stage 4 (구조 정합성)
+    stage4_oversplit_count: int = 0
+    stage4_missing_count: int = 0
+
     @property
     def passed(self) -> bool:
         return not any(i.severity == "error" for i in self.issues)
@@ -76,7 +84,8 @@ class ValidationReport:
             f"Stage1 누락 {self.stage1_missing_fragments}/"
             f"{self.stage1_source_fragments} · "
             f"Stage2 확인 {self.stage2_verified_count} (누락 {self.stage2_missing_count}) · "
-            f"Stage3 유사도 {self.stage3_similarity:.1%}"
+            f"Stage3 유사도 {self.stage3_similarity:.1%} · "
+            f"Stage4 오추출의심 {self.stage4_oversplit_count}·원본누락 {self.stage4_missing_count}"
         )
 
 
@@ -94,11 +103,12 @@ _MAX_MISSING_ISSUE_PER_STAGE = 10
 def validate(
     parsed: ParsedDocument, raw: RawDocument, source_path: Path | None = None
 ) -> ValidationReport:
-    """3단계 검증 실행."""
+    """4단계 검증 실행."""
     report = ValidationReport()
     _run_stage1(parsed, raw, source_path, report)
     _run_stage2(parsed, raw, report)
     _run_stage3(parsed, raw, report)
+    _run_stage4(parsed, report)
     return report
 
 
@@ -311,6 +321,94 @@ def _parsed_text_blob(parsed: ParsedDocument) -> str:
         for o in e.obligations:
             parts.extend([o.category, *o.items])
     return "\n".join(p for p in parts if p)
+
+
+# ---------------------------------------------------------------------------
+# Stage 4 — 구조 정합성 (책무세부 ↔ 관리의무 제목 1:1 대응)
+# ---------------------------------------------------------------------------
+# 매칭 임계치: 공통책무의 어미 차이("관리책임" vs "관리에 대한 책임", ≈0.96)는
+# 통과시키고, 진짜 누락(대응 없음, 실측 IBK ≈0.43)만 잡도록 KDB/IBK 실측으로 0.7 선정.
+_STAGE4_MATCH_RATIO = 0.7
+
+
+def _run_stage4(parsed: ParsedDocument, report: ValidationReport) -> None:
+    """bold-mode 문서에서 책무세부와 관리의무 제목의 1:1 대응을 점검.
+
+    - **오추출 의심(warn)**: 세부항목 0개 + 어떤 책무세부와도 미매칭인 관리의무 제목.
+      세부 한 줄이 bold 잡티로 제목으로 오승격된 경우(예: KDB IT부문장).
+    - **원본 누락 추정(info)**: 대응하는 관리의무 제목이 없는 책무세부.
+      원본이 해당 책무의 관리의무를 적지 않은 경우(예: IBK 동산/부동산).
+
+    gating: 관리의무에 세부항목이 하나도 없으면(태그/번호 모드 — 제목이 책무세부와
+    대응하지 않음) 검사를 생략한다. fail-soft: 모두 warn/info라 저장은 막지 않는다.
+    """
+    oversplit: list[ValidationIssue] = []
+    missing: list[ValidationIssue] = []
+
+    for e in parsed.executives:
+        resp_details = [d for r in e.responsibilities for d in r.details]
+        if not resp_details or not e.obligations:
+            continue
+        if not any(o.items for o in e.obligations):
+            continue  # bold-mode 아님 → 제목-책무세부 대응 검사 부적합
+        obl_titles = [o.category for o in e.obligations]
+        pos = e.position.replace("\n", ", ")
+
+        for o in e.obligations:
+            if o.items:
+                continue  # 세부항목 있으면 정상 제목
+            if not _stage4_has_match(o.category, resp_details):
+                oversplit.append(ValidationIssue(
+                    4, "warn",
+                    f"Stage 4 — 관리의무 제목 오추출 의심: "
+                    f"{_truncate(o.category, 50)} (세부항목 0개·책무세부 미매칭)",
+                    context=pos,
+                ))
+
+        for d in resp_details:
+            if not _stage4_has_match(d, obl_titles):
+                missing.append(ValidationIssue(
+                    4, "info",
+                    f"Stage 4 — 원본 관리의무 누락 추정: 책무세부 "
+                    f"{_truncate(d, 50)} 에 대응하는 관리의무 없음",
+                    context=pos,
+                ))
+
+    report.stage4_oversplit_count = len(oversplit)
+    report.stage4_missing_count = len(missing)
+
+    if oversplit:
+        report.issues.append(ValidationIssue(
+            4, "warn", f"Stage 4 — 관리의무 제목 오추출 의심 {len(oversplit)}건"
+        ))
+        report.issues.extend(oversplit[:_MAX_MISSING_ISSUE_PER_STAGE])
+    if missing:
+        report.issues.append(ValidationIssue(
+            4, "info", f"Stage 4 — 원본 관리의무 누락 추정 {len(missing)}건"
+        ))
+        report.issues.extend(missing[:_MAX_MISSING_ISSUE_PER_STAGE])
+
+
+def _stage4_norm(s: str) -> str:
+    """가운뎃점/불릿 통일 + 공백 제거 — 어미·표기 차이를 줄여 매칭 안정화."""
+    s = s.replace("∙", "·").replace("ㆍ", "·").replace("•", "·")
+    return re.sub(r"\s+", "", s)
+
+
+def _stage4_has_match(target: str, candidates: list[str]) -> bool:
+    """target이 candidates 중 하나와 동일/포함/유사(ratio≥임계치)면 True."""
+    nt = _stage4_norm(target)
+    if not nt:
+        return True  # 빈 값은 검사 제외
+    for c in candidates:
+        nc = _stage4_norm(c)
+        if not nc:
+            continue
+        if nt == nc or nt in nc or nc in nt:
+            return True
+        if SequenceMatcher(None, nt, nc).ratio() >= _STAGE4_MATCH_RATIO:
+            return True
+    return False
 
 
 # ---------------------------------------------------------------------------

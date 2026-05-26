@@ -130,6 +130,109 @@ def test_counts_by_severity():
 
 
 # ---------------------------------------------------------------------------
+# Stage 4 — 구조 정합성 (책무세부 ↔ 관리의무 제목 대응)
+# ---------------------------------------------------------------------------
+def _exec(resp_details, obl_blocks, position="본부장"):
+    """resp_details: list[str], obl_blocks: list[(category, items)]."""
+    return Executive(
+        id="e1", position=position, name="홍길동", title="본부장",
+        appointed_date="", concurrent_yn="", concurrent_detail="", departments="",
+        committees=[],
+        responsibility_summary="", assign_date="",
+        responsibilities=[
+            Responsibility(category="책무", details=[d], laws=[], regulations=[])
+            for d in resp_details
+        ],
+        obligations=[
+            Obligation(type="고유 책무", category=c, items=list(items))
+            for c, items in obl_blocks
+        ],
+        footnotes=Footnotes(),
+    )
+
+
+def _doc(*execs) -> ParsedDocument:
+    return ParsedDocument(
+        executives=list(execs),
+        parse_info=ParseInfo("t.docx", 0, len(execs), "2026-05-26"),
+    )
+
+
+def test_stage4_flags_oversplit_obligation_title():
+    """세부 0개 + 책무세부 미매칭 관리의무 제목 → 오추출 의심(warn). (KDB IT부문장 케이스)"""
+    e = _exec(
+        resp_details=["IT 표준·품질관리 및 IT 감리 운영에 대한 책임"],
+        obl_blocks=[
+            ("IT 표준·품질관리 및 IT 감리 운영에 대한 책임", ["IT 표준·아키텍처 관리"]),
+            ("IT 감리 프로젝트 대상 내·외부 감리 업무", []),  # 오승격
+        ],
+    )
+    report = validate(_doc(e), _raw_with(["dummy"]), source_path=None)
+    assert report.stage4_oversplit_count == 1
+    assert report.stage4_missing_count == 0
+    assert any(i.stage == 4 and i.severity == "warn" for i in report.issues)
+
+
+def test_stage4_flags_source_missing_obligation():
+    """대응 관리의무 없는 책무세부 → 원본 누락 추정(info). (IBK 동산/부동산 케이스)"""
+    e = _exec(
+        resp_details=[
+            "전사 업무용 동산/업무용 부동산 관리 제반사항에 대한 책임",  # 누락
+            "경비의 집행 및 관리에 대한 책임",
+        ],
+        obl_blocks=[
+            ("경비의 집행 및 관리에 대한 책임", ["본부 경비의 집행에 대한 관리·감독"]),
+        ],
+    )
+    report = validate(_doc(e), _raw_with(["dummy"]), source_path=None)
+    assert report.stage4_missing_count == 1
+    assert report.stage4_oversplit_count == 0
+    assert any(i.stage == 4 and i.severity == "info" for i in report.issues)
+    # fail-soft: Stage 4는 error를 만들지 않음 (info/warn 뿐 → 저장 막지 않음)
+    assert not any(i.stage == 4 and i.severity == "error" for i in report.issues)
+
+
+def test_stage4_skips_tag_mode_all_empty_items():
+    """관리의무 세부항목이 전부 0개(태그/번호 모드) → 검사 생략, 이슈 없음."""
+    e = _exec(
+        resp_details=["책무세부 가나다", "책무세부 라마바"],
+        obl_blocks=[("이사회 운영", []), ("감사 업무", [])],
+    )
+    report = validate(_doc(e), _raw_with(["dummy"]), source_path=None)
+    assert report.stage4_oversplit_count == 0
+    assert report.stage4_missing_count == 0
+    assert not any(i.stage == 4 for i in report.issues)
+
+
+def test_stage4_clean_when_titles_align():
+    """책무세부와 관리의무 제목이 1:1로 맞으면 이슈 0."""
+    e = _exec(
+        resp_details=["책무세부 가나다라마", "책무세부 바사아자차"],
+        obl_blocks=[
+            ("책무세부 가나다라마", ["세부1"]),
+            ("책무세부 바사아자차", ["세부2"]),
+        ],
+    )
+    report = validate(_doc(e), _raw_with(["dummy"]), source_path=None)
+    assert report.stage4_oversplit_count == 0
+    assert report.stage4_missing_count == 0
+
+
+def test_stage4_tolerates_eomi_difference():
+    """공통책무 어미 차이('관리책임' vs '관리에 대한 책임')는 누락으로 오탐하지 않음."""
+    e = _exec(
+        resp_details=["소관 업무·조직 내부통제정책 수립·운영 및 이행에 대한 내부통제등 관리책임"],
+        obl_blocks=[
+            ("소관 업무·조직 내부통제정책 수립·운영 및 이행에 대한 내부통제등 관리에 대한 책임",
+             ["내부통제기준 마련 적정성 점검"]),
+        ],
+    )
+    report = validate(_doc(e), _raw_with(["dummy"]), source_path=None)
+    assert report.stage4_missing_count == 0
+    assert report.stage4_oversplit_count == 0
+
+
+# ---------------------------------------------------------------------------
 # E2E — 실제 IBK fixture로 Stage 1/2/3 통과 확인
 # ---------------------------------------------------------------------------
 ibk_only = pytest.mark.skipif(not FIXTURE.exists(), reason="IBK fixture 없음")
