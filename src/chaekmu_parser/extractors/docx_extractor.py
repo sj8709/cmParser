@@ -70,7 +70,7 @@ class DocxExtractor(BaseExtractor):
         paragraphs: list[RawParagraph] = []
         for p in cell.paragraphs:
             text = p.text
-            is_bold = any(run.bold is True for run in p.runs)
+            is_bold = self._para_is_bold(p)
             paragraphs.append(RawParagraph(text=text, is_bold=is_bold))
 
         joined_text = "\n".join(p.text for p in paragraphs)
@@ -87,3 +87,22 @@ class DocxExtractor(BaseExtractor):
             nested_tables=nested_tables,
             paragraphs=paragraphs,
         )
+
+    @staticmethod
+    def _para_is_bold(p, threshold: float = 0.5) -> bool:
+        """단락을 'bold 제목'으로 볼지 글자 가중 다수결로 판정.
+
+        `any(run.bold)`은 한두 글자(가운뎃점 등)만 우연히 bold여도 단락 전체를
+        제목으로 승격시켜, 관리의무 세부항목이 제목으로 오추출되는 원인이 됐다.
+        실제 글자 기준 과반이 bold일 때만 제목으로 본다 (잡티-bold/잡티-비bold 양방향 견고).
+        """
+        bold_chars = 0
+        total_chars = 0
+        for run in p.runs:
+            stripped = run.text.strip()  # 공백-only run은 가중치에서 제외
+            if not stripped:
+                continue
+            total_chars += len(stripped)
+            if run.bold is True:
+                bold_chars += len(stripped)
+        return total_chars > 0 and (bold_chars / total_chars) >= threshold
