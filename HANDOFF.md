@@ -86,7 +86,8 @@
 
 **Phase 2a — validator 5단계 정합성 검증 (완료):**
 - [x] (커밋 `e6e2d76`) `src/chaekmu_parser/validator.py` — Stage 1 재추출 비교 / Stage 2 parsed→raw substring / Stage 3 SequenceMatcher quick_ratio
-- [x] (커밋 `5fdfe96`) Stage 4 — 책무세부↔관리의무 제목 구조 정합성 (bold-mode 한정, 어미 차이는 0.7 임계치로 통과)
+- [x] (커밋 `5fdfe96`) Stage 4 — 책무세부↔관리의무 제목 구조 정합성 (bold-mode 한정)
+- [x] (2026-05-29) Stage 4 비동일 대응(info) — 대응되나 글자 단위로 다른 쌍을 raw 불일치 기준으로 노출 (ICR 정확 일치 조인 대상). 템플릿 관리의무 헤더 '책무 세부내용' 통일 반영
 - [x] (2026-05-29) Stage 5 — 공통/고유 정합성: 책무표 '임원 공통' 표기 ↔ 공통 관리의무 분류 교차 검증. 분류 휴리스틱 오분류를 원본 표기 기준으로 탐지 (공통 미분류=warn / 과분류=info)
 - [x] `ValidationReport` — 이슈 리스트 + 단계별 카운트 + `passed`/`has_warnings` + `summary_line()`(한 줄) + `summary_block()`(Stage별 개행)
 - [x] GUI 연동: 워커가 write 후 자동 호출 → 로그에 `summary_block()` 다단 요약 → `[🔍 검증 리포트]` 버튼 → `ReportWindow`(Stage별 그룹 렌더링)
@@ -152,15 +153,17 @@ Add-on (포맷/회사 추가 시 확장)
 1. **Stage 1** raw ↔ 원본 파일 재추출 글자 단위 비교 (현재 docx만 지원, HWP/PDF는 Phase 2b/3 확장)
 2. **Stage 2** parsed 조각이 raw에 substring으로 존재 + 누락 탐지
 3. **Stage 3** parsed 역재조립 후 raw와 `SequenceMatcher.quick_ratio()` 유사도 비교
-4. **Stage 4** bold-mode 문서에서 책무세부↔관리의무 제목 1:1 대응 점검 (어미 차이는 통과, 진짜 누락만 탐지). 태그/번호 모드는 생략
+4. **Stage 4** bold-mode 문서에서 책무세부↔관리의무 제목 대응 점검. 3종:
+   - 오추출 의심(warn): 세부 0개 + 미매칭 제목 / 원본 누락 추정(info): 대응 제목 없는 책무세부(<0.7)
+   - **비동일 대응(info)**: 대응되나 글자 단위로 다른 쌍. **ICR이 책무세부↔관리의무를 정확 일치 키로 조인**하므로 어미 차이('관리책임' vs '관리에 대한 책임')·기호 차이(`·` vs `∙`)·표현 차이('퇴직연금 상품' vs '퇴직상품')를 전부 리뷰 큐로 노출. 태그/번호 모드는 생략
 5. **Stage 5** 공통/고유 정합성 — 책무표 '임원 공통' 표기와 공통 관리의무 분류를 임원별 교차 검증. normalizer 분류 휴리스틱이 놓친 공통 미분류/과분류를 원본 표기 기준으로 잡는 안전망
 
 **임계치** (validator.py 상단 상수):
 - Stage 1 누락률: 1% 경고 / 5% 오류
 - Stage 3 유사도: 55% 경고 / 30% 오류 (IBK 84% / KDB 84.4% 통과)
-- Stage 4 매칭: 유사도 0.7 (어미 차이 ≈0.96 통과, 진짜 누락 ≈0.43 탐지)
+- Stage 4 매칭: 유사도 0.7 (대응 판정용). 비동일 판정은 **raw 문자열 불일치** 기준(정규화 X)이라 기호·공백 차이도 잡음
 
-**중요 — Stage 4/5 모두 fail-soft**: warn/info만 만들고 error는 안 띄움 → 저장을 막지 않음. 책무세부와 관리의무 제목의 어미 차이(예: '관리책임' vs '관리에 대한 책임')는 **원문 충실 반영이라 의도적으로 통과**시킴.
+**중요 — Stage 4/5 모두 fail-soft**: warn/info만 만들고 error는 안 띄움 → 저장을 막지 않음. 단 비동일 대응은 다운스트림(ICR) 정확 일치 조인을 깨므로 **info로 노출해 사람이 원본/템플릿에서 reconcile** 하도록 함. (관련: 템플릿 관리의무 헤더를 '책무 세부내용'으로 통일 — 책무 섹션과 동일 키)
 
 GUI는 워커가 write 후 자동 호출 → `summary_block()` Stage별 개행 로그 출력 → `[검증 리포트]` 버튼으로 `ReportWindow`(Stage별 그룹 렌더링) 상세 뷰.
 
@@ -260,11 +263,17 @@ C:\project\workspace\chaekmu-parser\HANDOFF.md 읽고 이어서 진행.
 - `workers.py` — GUI 로그를 `summary_block()` 다단 출력으로 교체
 - `tests/test_validator.py` Stage 5 테스트 4개, 전체 **99개 통과**
 
+**추가 — Stage 4 비동일 대응 노출 (사용자 결정 반영):**
+- 사용자 확인: ICR은 책무세부↔관리의무를 **정확 일치 키로 조인**(템플릿 관리의무 헤더를 '책무 세부내용'으로 변경해 책무 섹션과 통일). 비동일이면 다운스트림 조인이 깨짐
+- `validator.py` Stage 4에 **비동일 대응(info)** 추가 — 대응되나 raw 문자열이 다른 쌍 전부 노출. KDB 실측 12건: 공통책무 어미 차이 10 + 퇴직연금 표현 차이 1 + IT부문장 `·` vs `∙` 기호 차이 1
+- `_stage4_best_match` 헬퍼 추가, summary/report에 비동일 카운트 반영
+- `tests/test_e2e_ibk.py` — 템플릿 헤더 변경('책무명'→'책무 세부내용') 반영, 전체 **101개 통과**
+
 **결정**:
-- 책무세부와 관리의무 제목의 **어미 차이(`관리책임` vs `관리에 대한 책임`)는 의도적 통과** — 원문 충실 반영. 잡으면 정상 케이스마다 거짓 경고
+- 비동일은 **저장은 막지 않되 info 리뷰 큐로 전부 노출**(어미 차이 포함) — ICR 정확 일치 조인 깨짐을 사람이 원본/템플릿에서 reconcile. raw 불일치 기준이라 기호·공백 차이도 포착
 - 분류 로직(normalizer) 미수정 — KDB 출력 동일, Stage 5는 검증 전용 안전망
 
-**대기**: 라이나 HWP fixture, Phase 1 공식 종료(ICR Java 파서 실소비), Phase 2b HWP
+**대기**: 라이나 HWP fixture, Phase 1 공식 종료(ICR Java 파서 실소비), Phase 2b HWP. **비동일 12건 reconcile 방법(원본 수정 vs 어느 쪽 표기를 정본으로) 사용자 판단 필요**
 
 ---
 

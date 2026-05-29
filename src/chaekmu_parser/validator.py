@@ -64,6 +64,7 @@ class ValidationReport:
     # Stage 4 (구조 정합성)
     stage4_oversplit_count: int = 0
     stage4_missing_count: int = 0
+    stage4_nonidentical_count: int = 0
 
     # Stage 5 (공통/고유 정합성)
     stage5_common_mismatch_count: int = 0
@@ -91,7 +92,8 @@ class ValidationReport:
             f"{self.stage1_source_fragments} · "
             f"Stage2 확인 {self.stage2_verified_count} (누락 {self.stage2_missing_count}) · "
             f"Stage3 유사도 {self.stage3_similarity:.1%} · "
-            f"Stage4 오추출의심 {self.stage4_oversplit_count}·원본누락 {self.stage4_missing_count} · "
+            f"Stage4 오추출의심 {self.stage4_oversplit_count}·원본누락 {self.stage4_missing_count}"
+            f"·비동일 {self.stage4_nonidentical_count} · "
             f"Stage5 공통불일치 {self.stage5_common_mismatch_count}"
         )
 
@@ -104,7 +106,7 @@ class ValidationReport:
             f"   ├ Stage 1 재추출 비교  : 원본 {self.stage1_source_fragments}단락 중 누락 {self.stage1_missing_fragments}",
             f"   ├ Stage 2 raw 대조     : 확인 {self.stage2_verified_count} · 누락 {self.stage2_missing_count}",
             f"   ├ Stage 3 재조립 유사도 : {self.stage3_similarity:.1%}",
-            f"   ├ Stage 4 구조 정합성   : 오추출의심 {self.stage4_oversplit_count} · 원본누락 {self.stage4_missing_count}",
+            f"   ├ Stage 4 구조 정합성   : 오추출의심 {self.stage4_oversplit_count} · 원본누락 {self.stage4_missing_count} · 비동일 {self.stage4_nonidentical_count}",
             f"   └ Stage 5 공통/고유     : 불일치 {self.stage5_common_mismatch_count}",
         ])
 
@@ -359,12 +361,17 @@ def _run_stage4(parsed: ParsedDocument, report: ValidationReport) -> None:
       세부 한 줄이 bold 잡티로 제목으로 오승격된 경우(예: KDB IT부문장).
     - **원본 누락 추정(info)**: 대응하는 관리의무 제목이 없는 책무세부.
       원본이 해당 책무의 관리의무를 적지 않은 경우(예: IBK 동산/부동산).
+    - **비동일 대응(info)**: 대응되긴 하나 책무세부와 관리의무 책무명이 글자 단위로
+      다른 경우. ICR은 둘을 정확 일치 키로 조인하므로 비동일이면 다운스트림 조인이
+      깨진다. 어미 차이(예: '관리책임' vs '관리에 대한 책임')부터 원문 자체의 표현
+      차이(예: '퇴직연금 상품' vs '퇴직상품')까지 사람이 검토하도록 전부 나열.
 
     gating: 관리의무에 세부항목이 하나도 없으면(태그/번호 모드 — 제목이 책무세부와
     대응하지 않음) 검사를 생략한다. fail-soft: 모두 warn/info라 저장은 막지 않는다.
     """
     oversplit: list[ValidationIssue] = []
     missing: list[ValidationIssue] = []
+    nonidentical: list[ValidationIssue] = []
 
     for e in parsed.executives:
         resp_details = [d for r in e.responsibilities for d in r.details]
@@ -394,9 +401,21 @@ def _run_stage4(parsed: ParsedDocument, report: ValidationReport) -> None:
                     f"{_truncate(d, 50)} 에 대응하는 관리의무 없음",
                     context=pos,
                 ))
+                continue
+            # 대응은 되지만 글자 단위로 동일하지 않은 쌍 → 정확 일치 조인 깨짐 후보
+            best = _stage4_best_match(d, obl_titles)
+            if best is not None and best != d:
+                raw_ratio = SequenceMatcher(None, d, best).ratio()
+                nonidentical.append(ValidationIssue(
+                    4, "info",
+                    f"Stage 4 — 책무세부↔관리의무 책무명 비동일(유사도 {raw_ratio:.0%}): "
+                    f"책무세부 «{_truncate(d, 70)}» ↔ 관리의무 «{_truncate(best, 70)}»",
+                    context=pos,
+                ))
 
     report.stage4_oversplit_count = len(oversplit)
     report.stage4_missing_count = len(missing)
+    report.stage4_nonidentical_count = len(nonidentical)
 
     if oversplit:
         report.issues.append(ValidationIssue(
@@ -408,6 +427,13 @@ def _run_stage4(parsed: ParsedDocument, report: ValidationReport) -> None:
             4, "info", f"Stage 4 — 원본 관리의무 누락 추정 {len(missing)}건"
         ))
         report.issues.extend(missing[:_MAX_MISSING_ISSUE_PER_STAGE])
+    if nonidentical:
+        report.issues.append(ValidationIssue(
+            4, "info",
+            f"Stage 4 — 책무세부↔관리의무 책무명 비동일 {len(nonidentical)}건 "
+            f"(ICR 정확 일치 조인 대상 — 검토 필요)"
+        ))
+        report.issues.extend(nonidentical[:_MAX_MISSING_ISSUE_PER_STAGE])
 
 
 def _stage4_norm(s: str) -> str:
@@ -430,6 +456,24 @@ def _stage4_has_match(target: str, candidates: list[str]) -> bool:
         if SequenceMatcher(None, nt, nc).ratio() >= _STAGE4_MATCH_RATIO:
             return True
     return False
+
+
+def _stage4_best_match(target: str, candidates: list[str]) -> str | None:
+    """target과 정규화 유사도가 가장 높은 candidate 반환 (동일/포함은 최우선)."""
+    nt = _stage4_norm(target)
+    if not nt:
+        return None
+    best: str | None = None
+    best_ratio = -1.0
+    for c in candidates:
+        nc = _stage4_norm(c)
+        if not nc:
+            continue
+        ratio = 1.0 if (nt == nc or nt in nc or nc in nt) else SequenceMatcher(None, nt, nc).ratio()
+        if ratio > best_ratio:
+            best_ratio = ratio
+            best = c
+    return best
 
 
 # ---------------------------------------------------------------------------

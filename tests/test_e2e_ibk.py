@@ -111,8 +111,9 @@ def test_list_headers_preserved(pipeline):
         assert str(ws.cell(26 + dc, 1).value or "").strip() == "책무"
         assert "세부" in str(ws.cell(26 + dc, 2).value or "")
         # 관리의무 헤더 row 36 + dc + dr
+        # (템플릿 변경: 관리의무 책무명 헤더를 '책무 세부내용'으로 통일 — ICR 정확 일치 조인 키)
         assert "구분" in str(ws.cell(36 + dc + dr, 1).value or "")
-        assert "책무명" in str(ws.cell(36 + dc + dr, 2).value or "")
+        assert "세부내용" in str(ws.cell(36 + dc + dr, 2).value or "")
 
 
 def test_footnotes_preserved(pipeline):

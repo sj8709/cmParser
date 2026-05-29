@@ -230,6 +230,37 @@ def test_stage4_tolerates_eomi_difference():
     report = validate(_doc(e), _raw_with(["dummy"]), source_path=None)
     assert report.stage4_missing_count == 0
     assert report.stage4_oversplit_count == 0
+    # 어미 차이는 누락은 아니지만 '비동일'로 info 노출돼야 함 (ICR 정확 일치 조인 대상)
+    assert report.stage4_nonidentical_count == 1
+    assert any(
+        i.stage == 4 and i.severity == "info" and "비동일" in i.message
+        for i in report.issues
+    )
+
+
+def test_stage4_flags_nonidentical_wording():
+    """대응되지만 원문 표현이 다른 책무세부↔관리의무 책무명 → 비동일(info). (KDB 퇴직연금 케이스)"""
+    e = _exec(
+        resp_details=["퇴직연금 상품 및 퇴직연금 사업 운영 및 관리에 대한 책임"],
+        obl_blocks=[
+            ("퇴직상품 및 퇴직연금 운영 및 관리에 대한 책임", ["퇴직연금 운영 관리·감독"]),
+        ],
+    )
+    report = validate(_doc(e), _raw_with(["dummy"]), source_path=None)
+    assert report.stage4_nonidentical_count == 1
+    assert report.stage4_missing_count == 0
+
+
+def test_stage4_no_nonidentical_when_exact():
+    """책무세부와 관리의무 책무명이 글자까지 동일하면 비동일 0."""
+    e = _exec(
+        resp_details=["보험상품 관련 개발·개선 절차 운영에 대한 책임"],
+        obl_blocks=[
+            ("보험상품 관련 개발·개선 절차 운영에 대한 책임", ["상품개발 절차 준수 관리·감독"]),
+        ],
+    )
+    report = validate(_doc(e), _raw_with(["dummy"]), source_path=None)
+    assert report.stage4_nonidentical_count == 0
 
 
 # ---------------------------------------------------------------------------

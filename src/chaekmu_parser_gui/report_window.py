@@ -49,7 +49,7 @@ class ReportWindow(ctk.CTkToplevel):
             f"• Stage 1 (재추출 비교) — 원본 단락 {report.stage1_source_fragments}개 중 raw 누락 {report.stage1_missing_fragments}개",
             f"• Stage 2 (parsed → raw 대조) — 확인 {report.stage2_verified_count}건, 누락 {report.stage2_missing_count}건",
             f"• Stage 3 (재조립 유사도) — {report.stage3_similarity:.1%}",
-            f"• Stage 4 (구조 정합성) — 관리의무 오추출 의심 {report.stage4_oversplit_count}건, 원본 누락 추정 {report.stage4_missing_count}건",
+            f"• Stage 4 (구조 정합성) — 오추출 의심 {report.stage4_oversplit_count}건, 원본 누락 추정 {report.stage4_missing_count}건, 책무명 비동일 {report.stage4_nonidentical_count}건",
             f"• Stage 5 (공통/고유 정합성) — 공통 분류 불일치 {report.stage5_common_mismatch_count}건",
         ]
         for line in summary_lines:
