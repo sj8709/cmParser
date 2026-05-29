@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "chaekmu-parser"
-version = "0.1.0"
+version = "0.1.2"
 description = "책무기술서 파싱 파이프라인 - 금융회사 책무기술서(DOCX/HWP/PDF) -> 통일 JSON -> XLSX"
 requires-python = ">=3.10"
 dependencies = [

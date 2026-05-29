@@ -4,4 +4,4 @@
 UI 프레임워크 교체 시(Streamlit/PyWebview 등) 이 패키지만 대체하면 됨.
 """
 
-__version__ = "0.1.1"
+__version__ = "0.1.2"

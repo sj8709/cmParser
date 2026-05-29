@@ -17,6 +17,7 @@ from tkinter import filedialog
 import customtkinter as ctk
 
 from chaekmu_parser.validator import ValidationReport
+from chaekmu_parser_gui import __version__ as APP_VERSION
 from chaekmu_parser_gui.logging_setup import current_log_file, setup_logging
 from chaekmu_parser_gui.report_window import ReportWindow
 from chaekmu_parser_gui.workers import (
@@ -27,7 +28,6 @@ from chaekmu_parser_gui.workers import (
 )
 
 APP_TITLE = "책무기술서 파서"
-APP_VERSION = "0.1.0"
 WINDOW_SIZE = "680x620"
 
 DEFAULT_OUTPUT_DIR = Path.home() / "Desktop"
