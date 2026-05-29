@@ -84,11 +84,13 @@
 - [x] 산출물: `dist/chaekmu-parser-v0.1.0-win64.zip` (17MB)
 - [x] 설계 문서: `claudedocs/gui_packaging_design.md`
 
-**Phase 2a — validator 3단계 정합성 검증 (완료, 2026-04-14, 커밋 `e6e2d76`):**
-- [x] `src/chaekmu_parser/validator.py` — Stage 1 재추출 비교 / Stage 2 parsed→raw substring / Stage 3 SequenceMatcher quick_ratio
-- [x] `ValidationReport` 자료구조 — 이슈 리스트 + 단계별 카운트 + `passed`/`has_warnings` 속성 + `summary_line()`
-- [x] GUI 연동: 워커가 write 후 자동 호출 → 로그에 한 줄 요약 → `[🔍 검증 리포트]` 버튼 → `ReportWindow` Toplevel
-- [x] `tests/test_validator.py` 9개 + `tests/test_gui_report_window.py` 2개, IBK 실측 통과 (Stage1 누락 < 1%, Stage2 verify ≥ 60, Stage3 ≈ 84%)
+**Phase 2a — validator 5단계 정합성 검증 (완료):**
+- [x] (커밋 `e6e2d76`) `src/chaekmu_parser/validator.py` — Stage 1 재추출 비교 / Stage 2 parsed→raw substring / Stage 3 SequenceMatcher quick_ratio
+- [x] (커밋 `5fdfe96`) Stage 4 — 책무세부↔관리의무 제목 구조 정합성 (bold-mode 한정, 어미 차이는 0.7 임계치로 통과)
+- [x] (2026-05-29) Stage 5 — 공통/고유 정합성: 책무표 '임원 공통' 표기 ↔ 공통 관리의무 분류 교차 검증. 분류 휴리스틱 오분류를 원본 표기 기준으로 탐지 (공통 미분류=warn / 과분류=info)
+- [x] `ValidationReport` — 이슈 리스트 + 단계별 카운트 + `passed`/`has_warnings` + `summary_line()`(한 줄) + `summary_block()`(Stage별 개행)
+- [x] GUI 연동: 워커가 write 후 자동 호출 → 로그에 `summary_block()` 다단 요약 → `[🔍 검증 리포트]` 버튼 → `ReportWindow`(Stage별 그룹 렌더링)
+- [x] `tests/test_validator.py` + `tests/test_gui_report_window.py`, 전체 99개 통과. KDB생명 실측: Stage1 누락 0/732, Stage2 확인 714(누락 0), Stage3 84.4%, Stage4 0/0, Stage5 불일치 0
 
 **Phase 2b — HWP (대기):**
 - [ ] `extractors/hwp_extractor.py` — pyhwp 기반, 독립 회의체 테이블 지원. **라이나 fixture 제공 전까지 블록됨**
@@ -120,7 +122,7 @@ Core (시드 2개로 확정, 이후 변경 없음)
 ├─ extractors/base.py     ← 인터페이스 불변
 ├─ classifier.py          ← 법령 라벨 기반, 완화만 허용
 ├─ normalizer.py          ← 통일 JSON 스키마 불변
-├─ validator.py           ← Phase 2a 구현 완료 (Stage 1은 docx 한정)
+├─ validator.py           ← Phase 2a 5단계 구현 완료 (Stage 1은 docx 한정, Stage 4/5 fail-soft)
 └─ xlsx_writer.py
 
 Add-on (포맷/회사 추가 시 확장)
@@ -143,19 +145,24 @@ Add-on (포맷/회사 추가 시 확장)
 정합성 검증 위해 가공 전(raw 셀 텍스트)과 가공 후(parsed 필드)를 분리 저장.
 `Responsibility.raw_law_reg`, `Responsibility.source(SourceRef)` 등.
 
-### 5.4 3단계 정합성 검증 (Phase 2a 구현 완료)
+### 5.4 5단계 정합성 검증 (Phase 2a 구현 완료)
 
 `src/chaekmu_parser/validator.py` — `validate(parsed, raw, source_path)` → `ValidationReport`.
 
 1. **Stage 1** raw ↔ 원본 파일 재추출 글자 단위 비교 (현재 docx만 지원, HWP/PDF는 Phase 2b/3 확장)
 2. **Stage 2** parsed 조각이 raw에 substring으로 존재 + 누락 탐지
 3. **Stage 3** parsed 역재조립 후 raw와 `SequenceMatcher.quick_ratio()` 유사도 비교
+4. **Stage 4** bold-mode 문서에서 책무세부↔관리의무 제목 1:1 대응 점검 (어미 차이는 통과, 진짜 누락만 탐지). 태그/번호 모드는 생략
+5. **Stage 5** 공통/고유 정합성 — 책무표 '임원 공통' 표기와 공통 관리의무 분류를 임원별 교차 검증. normalizer 분류 휴리스틱이 놓친 공통 미분류/과분류를 원본 표기 기준으로 잡는 안전망
 
 **임계치** (validator.py 상단 상수):
 - Stage 1 누락률: 1% 경고 / 5% 오류
-- Stage 3 유사도: 55% 경고 / 30% 오류 (IBK 기준 84% 통과)
+- Stage 3 유사도: 55% 경고 / 30% 오류 (IBK 84% / KDB 84.4% 통과)
+- Stage 4 매칭: 유사도 0.7 (어미 차이 ≈0.96 통과, 진짜 누락 ≈0.43 탐지)
 
-GUI는 워커가 write 후 자동 호출 → `🔍 요약 라인` 로그 출력 → `[검증 리포트]` 버튼으로 `ReportWindow` 상세 뷰.
+**중요 — Stage 4/5 모두 fail-soft**: warn/info만 만들고 error는 안 띄움 → 저장을 막지 않음. 책무세부와 관리의무 제목의 어미 차이(예: '관리책임' vs '관리에 대한 책임')는 **원문 충실 반영이라 의도적으로 통과**시킴.
+
+GUI는 워커가 write 후 자동 호출 → `summary_block()` Stage별 개행 로그 출력 → `[검증 리포트]` 버튼으로 `ReportWindow`(Stage별 그룹 렌더링) 상세 뷰.
 
 ---
 
@@ -236,6 +243,30 @@ C:\project\workspace\chaekmu-parser\HANDOFF.md 읽고 이어서 진행.
 ---
 
 ## 11. 마지막 세션 요약
+
+### 2026-05-29 세션
+
+**배경**: KDB생명 DOCX→XLSX 추출 후 사용자가 "공통 쪽 미매칭을 검증기가 못 잡는 것 같다" 제보.
+
+**확인 결과**:
+- KDB생명 12임원 실측 — 공통 책무·책무상세·관리의무 **전부 정상 매칭** (공통 있는 10명 유사도 0.96, 대표이사·사외이사는 공통 없음=정상)
+- 단, 검증기에 **공통/고유 타입을 점검하는 단계가 아예 없었음** = 사용자 직감대로 사각지대 존재. 분류는 normalizer 휴리스틱(마지막 블록+키워드 3개)에 의존하며 원문 '임원 공통' 표기를 무시 중
+
+**완료 — Stage 5 (공통/고유 정합성) 추가:**
+- `validator.py` `_run_stage5` — 책무표 '임원 공통' 표기 ↔ 공통 관리의무 분류 교차 검증 (`_COMMON_RESP_MARKER` 정규식). 공통 미분류=warn / 과분류=info. normalizer 분류 로직은 **불변** (안전망만 추가)
+- 주입 테스트로 탐지 확인: KDB 영업부문장 공통→고유 강제 시 Stage 5가 정확히 warn 포착
+- `summary_block()` 추가 (Stage별 개행 다단 요약), `summary_line()`은 Stage5 항목 추가
+- `report_window.py` — 상세 이슈를 Stage별 그룹+구분선으로 렌더링, Stage 5 요약 줄 추가
+- `workers.py` — GUI 로그를 `summary_block()` 다단 출력으로 교체
+- `tests/test_validator.py` Stage 5 테스트 4개, 전체 **99개 통과**
+
+**결정**:
+- 책무세부와 관리의무 제목의 **어미 차이(`관리책임` vs `관리에 대한 책임`)는 의도적 통과** — 원문 충실 반영. 잡으면 정상 케이스마다 거짓 경고
+- 분류 로직(normalizer) 미수정 — KDB 출력 동일, Stage 5는 검증 전용 안전망
+
+**대기**: 라이나 HWP fixture, Phase 1 공식 종료(ICR Java 파서 실소비), Phase 2b HWP
+
+---
 
 ### 2026-04-14 세션
 

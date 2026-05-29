@@ -7,6 +7,13 @@ import customtkinter as ctk
 from chaekmu_parser.validator import ValidationIssue, ValidationReport
 
 _SEVERITY_ICON = {"error": "❌", "warn": "⚠️", "info": "ℹ️"}
+_STAGE_TITLE = {
+    1: "Stage 1 · 재추출 비교",
+    2: "Stage 2 · raw 대조",
+    3: "Stage 3 · 재조립 유사도",
+    4: "Stage 4 · 구조 정합성",
+    5: "Stage 5 · 공통/고유 정합성",
+}
 
 
 class ReportWindow(ctk.CTkToplevel):
@@ -43,6 +50,7 @@ class ReportWindow(ctk.CTkToplevel):
             f"• Stage 2 (parsed → raw 대조) — 확인 {report.stage2_verified_count}건, 누락 {report.stage2_missing_count}건",
             f"• Stage 3 (재조립 유사도) — {report.stage3_similarity:.1%}",
             f"• Stage 4 (구조 정합성) — 관리의무 오추출 의심 {report.stage4_oversplit_count}건, 원본 누락 추정 {report.stage4_missing_count}건",
+            f"• Stage 5 (공통/고유 정합성) — 공통 분류 불일치 {report.stage5_common_mismatch_count}건",
         ]
         for line in summary_lines:
             label = ctk.CTkLabel(container, text=line, anchor="w",
@@ -68,8 +76,7 @@ class ReportWindow(ctk.CTkToplevel):
         if not report.issues:
             textbox.insert("end", "검출된 이슈가 없습니다. 모든 단계 통과.\n")
         else:
-            for idx, issue in enumerate(report.issues, 1):
-                self._render_issue(textbox, idx, issue)
+            self._render_issues_grouped(textbox, report.issues)
 
         textbox.configure(state="disabled")
 
@@ -78,10 +85,22 @@ class ReportWindow(ctk.CTkToplevel):
         )
         close_btn.pack(pady=(10, 0))
 
+    @classmethod
+    def _render_issues_grouped(cls, textbox, issues: list[ValidationIssue]) -> None:
+        """Stage별로 묶어 헤더·구분선과 함께 렌더링 — 단계 경계를 한눈에."""
+        index = 0
+        for stage in sorted({i.stage for i in issues}):
+            stage_issues = [i for i in issues if i.stage == stage]
+            title = _STAGE_TITLE.get(stage, f"Stage {stage}")
+            textbox.insert("end", f"━━ {title} ({len(stage_issues)}건) " + "━" * 8 + "\n")
+            for issue in stage_issues:
+                index += 1
+                cls._render_issue(textbox, index, issue)
+            textbox.insert("end", "\n")
+
     @staticmethod
     def _render_issue(textbox, index: int, issue: ValidationIssue) -> None:
         icon = _SEVERITY_ICON.get(issue.severity, "•")
-        textbox.insert("end", f"[{index:3d}] {icon} Stage {issue.stage}  {issue.message}\n")
+        textbox.insert("end", f"  [{index:3d}] {icon} {issue.message}\n")
         if issue.context:
-            textbox.insert("end", f"       (대상: {issue.context})\n")
-        textbox.insert("end", "\n")
+            textbox.insert("end", f"          └ 대상: {issue.context}\n")

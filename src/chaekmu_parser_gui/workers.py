@@ -111,7 +111,7 @@ def _run_pipeline(request: PipelineRequest, q: "queue.Queue[StatusMessage]") -> 
             report = validate(parsed, raw, source_path=request.input_path)
             log.info("validation: %s", report.summary_line())
             level = "warn" if not report.passed or report.has_warnings else "ok"
-            q.put(StatusMessage(level, f"🔍 {report.summary_line()}"))
+            q.put(StatusMessage(level, report.summary_block()))
         except Exception as ve:
             log.exception("validation step failed")
             q.put(StatusMessage("warn", f"⚠ 검증 단계 실패 (변환 성공): {ve}"))

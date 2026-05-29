@@ -1,5 +1,5 @@
 """
-3단계 정합성 검증 레이어 (HANDOFF §5.4).
+5단계 정합성 검증 레이어 (HANDOFF §5.4).
 
 1. **Stage 1 (재추출 비교)**: RawDocument가 원본을 충실히 담았는지 — 독립 경로로
    원본을 한 번 더 훑어 얻은 텍스트 세트와 raw 셀 텍스트를 비교.
@@ -10,6 +10,9 @@
 4. **Stage 4 (구조 정합성)**: bold-mode 문서에서 책무세부 ↔ 관리의무 제목의 1:1 대응을
    점검. 세부 0개·미매칭 제목 = 오추출 의심(warn), 대응 제목 없는 책무세부 = 원본 누락
    추정(info). 태그/번호 모드는 대응 관계가 없으므로 생략.
+5. **Stage 5 (공통/고유 정합성)**: 책무표의 '임원 공통' 표기와 관리의무의 공통 책무
+   분류가 임원별로 일치하는지 교차 검증. 분류 휴리스틱(마지막 블록 키워드)이
+   놓친 공통 미분류/과분류를 원본 표기 기준으로 잡는다.
 
 결과는 `ValidationReport`로 반환. GUI/테스트가 소비.
 """
@@ -30,7 +33,7 @@ from chaekmu_parser.models import (
 )
 
 Severity = Literal["info", "warn", "error"]
-Stage = Literal[1, 2, 3, 4]
+Stage = Literal[1, 2, 3, 4, 5]
 
 # ---------------------------------------------------------------------------
 # 결과 자료구조
@@ -62,6 +65,9 @@ class ValidationReport:
     stage4_oversplit_count: int = 0
     stage4_missing_count: int = 0
 
+    # Stage 5 (공통/고유 정합성)
+    stage5_common_mismatch_count: int = 0
+
     @property
     def passed(self) -> bool:
         return not any(i.severity == "error" for i in self.issues)
@@ -85,8 +91,22 @@ class ValidationReport:
             f"{self.stage1_source_fragments} · "
             f"Stage2 확인 {self.stage2_verified_count} (누락 {self.stage2_missing_count}) · "
             f"Stage3 유사도 {self.stage3_similarity:.1%} · "
-            f"Stage4 오추출의심 {self.stage4_oversplit_count}·원본누락 {self.stage4_missing_count}"
+            f"Stage4 오추출의심 {self.stage4_oversplit_count}·원본누락 {self.stage4_missing_count} · "
+            f"Stage5 공통불일치 {self.stage5_common_mismatch_count}"
         )
+
+    def summary_block(self) -> str:
+        """로그/뷰어용 여러 줄 요약 — Stage별로 개행해 가독성 확보."""
+        c = self.counts_by_severity()
+        status = "✓ 통과" if self.passed else "❌ 실패"
+        return "\n".join([
+            f"🔍 검증 {status} — 오류 {c['error']} · 경고 {c['warn']} · 정보 {c['info']}",
+            f"   ├ Stage 1 재추출 비교  : 원본 {self.stage1_source_fragments}단락 중 누락 {self.stage1_missing_fragments}",
+            f"   ├ Stage 2 raw 대조     : 확인 {self.stage2_verified_count} · 누락 {self.stage2_missing_count}",
+            f"   ├ Stage 3 재조립 유사도 : {self.stage3_similarity:.1%}",
+            f"   ├ Stage 4 구조 정합성   : 오추출의심 {self.stage4_oversplit_count} · 원본누락 {self.stage4_missing_count}",
+            f"   └ Stage 5 공통/고유     : 불일치 {self.stage5_common_mismatch_count}",
+        ])
 
 
 # ---------------------------------------------------------------------------
@@ -103,12 +123,13 @@ _MAX_MISSING_ISSUE_PER_STAGE = 10
 def validate(
     parsed: ParsedDocument, raw: RawDocument, source_path: Path | None = None
 ) -> ValidationReport:
-    """4단계 검증 실행."""
+    """5단계 검증 실행."""
     report = ValidationReport()
     _run_stage1(parsed, raw, source_path, report)
     _run_stage2(parsed, raw, report)
     _run_stage3(parsed, raw, report)
     _run_stage4(parsed, report)
+    _run_stage5(parsed, report)
     return report
 
 
@@ -409,6 +430,53 @@ def _stage4_has_match(target: str, candidates: list[str]) -> bool:
         if SequenceMatcher(None, nt, nc).ratio() >= _STAGE4_MATCH_RATIO:
             return True
     return False
+
+
+# ---------------------------------------------------------------------------
+# Stage 5 — 공통/고유 정합성 (책무 '임원 공통' 표기 ↔ 공통 관리의무)
+# ---------------------------------------------------------------------------
+# 책무(RESP) 표에서 공통책무 행을 표시하는 명시 마커. 회사마다 표기가 달라
+# 띄어쓰기를 허용한다. 예: '소관 ... 책무 (임원 공통)'.
+_COMMON_RESP_MARKER = re.compile(r"임\s*원\s*공\s*통")
+
+
+def _run_stage5(parsed: ParsedDocument, report: ValidationReport) -> None:
+    """책무표의 '임원 공통' 표기와 관리의무의 공통 책무 분류가 일치하는지 교차 검증.
+
+    분류 로직(normalizer)은 마지막 블록 키워드 휴리스틱에 의존해 공통/고유를 정한다.
+    이 단계는 원본이 명시한 '임원 공통' 표기를 독립 근거로 삼아 휴리스틱의 오분류를 잡는다.
+
+    - **공통 미분류 의심(warn)**: 책무에 '임원 공통' 표기가 있으나 관리의무는 전부 고유.
+    - **공통 과분류 의심(info)**: 관리의무에 공통 책무가 있으나 책무엔 '임원 공통' 표기 없음.
+
+    대표이사처럼 둘 다 없는 경우는 정상으로 통과한다.
+    """
+    mismatches: list[ValidationIssue] = []
+    for e in parsed.executives:
+        resp_common = any(
+            _COMMON_RESP_MARKER.search(r.category or "") for r in e.responsibilities
+        )
+        oblig_common = any(o.type == "공통 책무" for o in e.obligations)
+        if resp_common == oblig_common:
+            continue
+        pos = e.position.replace("\n", ", ")
+        if resp_common and not oblig_common:
+            mismatches.append(ValidationIssue(
+                5, "warn",
+                "Stage 5 — 책무에 '임원 공통' 표기가 있으나 관리의무가 전부 고유로 분류됨 "
+                "(공통 미분류 의심)",
+                context=pos,
+            ))
+        else:  # oblig_common and not resp_common
+            mismatches.append(ValidationIssue(
+                5, "info",
+                "Stage 5 — 관리의무에 공통 책무가 있으나 책무에 '임원 공통' 표기 없음 "
+                "(분류 근거 확인 권장)",
+                context=pos,
+            ))
+
+    report.stage5_common_mismatch_count = len(mismatches)
+    report.issues.extend(mismatches[:_MAX_MISSING_ISSUE_PER_STAGE])
 
 
 # ---------------------------------------------------------------------------

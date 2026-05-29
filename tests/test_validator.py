@@ -1,4 +1,4 @@
-"""validator.py — 3단계 정합성 검증 테스트."""
+"""validator.py — 5단계 정합성 검증 테스트."""
 
 from copy import deepcopy
 from pathlib import Path
@@ -230,6 +230,73 @@ def test_stage4_tolerates_eomi_difference():
     report = validate(_doc(e), _raw_with(["dummy"]), source_path=None)
     assert report.stage4_missing_count == 0
     assert report.stage4_oversplit_count == 0
+
+
+# ---------------------------------------------------------------------------
+# Stage 5 — 공통/고유 정합성 (책무 '임원 공통' 표기 ↔ 공통 관리의무)
+# ---------------------------------------------------------------------------
+def _exec5(resp_categories, obl_types, position="본부장"):
+    """resp_categories: list[str], obl_types: list[str] (관리의무 type 목록)."""
+    return Executive(
+        id="e1", position=position, name="홍길동", title="본부장",
+        appointed_date="", concurrent_yn="", concurrent_detail="", departments="",
+        committees=[],
+        responsibility_summary="", assign_date="",
+        responsibilities=[
+            Responsibility(category=c, details=["세부"], laws=[], regulations=[])
+            for c in resp_categories
+        ],
+        obligations=[
+            Obligation(type=t, category="관리의무", items=["항목"])
+            for t in obl_types
+        ],
+        footnotes=Footnotes(),
+    )
+
+
+def test_stage5_flags_common_misclassified():
+    """책무에 '임원 공통' 표기가 있으나 관리의무가 전부 고유 → 공통 미분류 의심(warn)."""
+    e = _exec5(
+        resp_categories=["고유 책무", "소관 업무조직의 내부통제 관리에 대한 책무 (임원 공통)"],
+        obl_types=["고유 책무", "고유 책무"],
+    )
+    report = validate(_doc(e), _raw_with(["dummy"]), source_path=None)
+    assert report.stage5_common_mismatch_count == 1
+    assert any(i.stage == 5 and i.severity == "warn" for i in report.issues)
+
+
+def test_stage5_flags_common_without_marker():
+    """관리의무에 공통 책무가 있으나 책무엔 '임원 공통' 표기 없음 → 확인 권장(info)."""
+    e = _exec5(
+        resp_categories=["고유 책무 가나다"],
+        obl_types=["고유 책무", "공통 책무"],
+    )
+    report = validate(_doc(e), _raw_with(["dummy"]), source_path=None)
+    assert report.stage5_common_mismatch_count == 1
+    assert any(i.stage == 5 and i.severity == "info" for i in report.issues)
+
+
+def test_stage5_clean_when_aligned():
+    """'임원 공통' 표기 + 공통 관리의무가 함께 있으면 정합 → 이슈 0."""
+    e = _exec5(
+        resp_categories=["고유 책무", "소관 ... 책무(임원 공통)"],
+        obl_types=["고유 책무", "공통 책무"],
+    )
+    report = validate(_doc(e), _raw_with(["dummy"]), source_path=None)
+    assert report.stage5_common_mismatch_count == 0
+    assert not any(i.stage == 5 for i in report.issues)
+
+
+def test_stage5_clean_for_ceo_without_common():
+    """대표이사처럼 책무·관리의무 모두 공통이 없으면 정상 통과."""
+    e = _exec5(
+        resp_categories=["내부통제 총괄 책무"],
+        obl_types=["고유 책무"],
+        position="대표이사",
+    )
+    report = validate(_doc(e), _raw_with(["dummy"]), source_path=None)
+    assert report.stage5_common_mismatch_count == 0
+    assert not any(i.stage == 5 for i in report.issues)
 
 
 # ---------------------------------------------------------------------------
