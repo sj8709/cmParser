@@ -31,6 +31,7 @@ from chaekmu_parser.models import (
     RawDocument,
     RawTable,
 )
+from chaekmu_parser.normalizer import _COMMON_RESP_MARKER
 
 Severity = Literal["info", "warn", "error"]
 Stage = Literal[1, 2, 3, 4, 5]
@@ -479,9 +480,8 @@ def _stage4_best_match(target: str, candidates: list[str]) -> str | None:
 # ---------------------------------------------------------------------------
 # Stage 5 — 공통/고유 정합성 (책무 '임원 공통' 표기 ↔ 공통 관리의무)
 # ---------------------------------------------------------------------------
-# 책무(RESP) 표에서 공통책무 행을 표시하는 명시 마커. 회사마다 표기가 달라
-# 띄어쓰기를 허용한다. 예: '소관 ... 책무 (임원 공통)'.
-_COMMON_RESP_MARKER = re.compile(r"임\s*원\s*공\s*통")
+# 책무(RESP) 표의 '임원 공통' 마커는 normalizer가 단일 출처로 정의 — 분류와
+# 검증이 같은 정규식을 공유해야 휴리스틱·교차검증의 의미가 일치한다.
 
 
 def _run_stage5(parsed: ParsedDocument, report: ValidationReport) -> None:

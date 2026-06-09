@@ -49,6 +49,8 @@ from chaekmu_parser.models import (
 _TRAILING_DEUNG = re.compile(r"(,\s*[^,\n]+?)\s+등(?=\s*$|\s*\n|\s*\|)", re.MULTILINE)
 _CEO_PATTERN = re.compile(r"대\s*표\s*이\s*사")
 _COMMON_OBLIG_KEYWORDS = ("내부통제", "관리조치", "수립", "운영", "이행")
+# 책무(RESP) 표의 '임원 공통' 표기. validator Stage 5와 동일 정의 — 단일 출처.
+_COMMON_RESP_MARKER = re.compile(r"임\s*원\s*공\s*통")
 
 # 관리의무 번호 체계 — 라인 시작 접두사 (classifier와 동일 집합)
 _NUMBER_PREFIX = re.compile(
@@ -260,7 +262,10 @@ def _strip_trailing_deung(text: str) -> str:
 # 표C (OBLIGATION)
 # ---------------------------------------------------------------------------
 def _parse_obligation(
-    table: RawTable, position: str, table_index: int
+    table: RawTable,
+    position: str,
+    table_index: int,
+    resp_has_common: bool = False,
 ) -> list[Obligation]:
     if not table.rows or not table.rows[0].cells:
         return []
@@ -280,7 +285,7 @@ def _parse_obligation(
     result: list[Obligation] = []
     for idx, (explicit_type, title, items) in enumerate(blocks):
         obl_type: ObligationType = _resolve_obligation_type(
-            explicit_type, idx, len(blocks), title, is_ceo
+            explicit_type, idx, len(blocks), title, is_ceo, resp_has_common
         )
         result.append(
             Obligation(
@@ -399,16 +404,22 @@ def _split_by_number(paragraphs) -> list[_Block]:
 
 
 def _resolve_obligation_type(
-    explicit: str | None, idx: int, total: int, title: str, is_ceo: bool
+    explicit: str | None,
+    idx: int,
+    total: int,
+    title: str,
+    is_ceo: bool,
+    resp_has_common: bool = False,
 ) -> ObligationType:
     """
     우선순위:
-      1. 대표이사 → 무조건 "고유 책무"
+      1. 대표이사 AND 책무에 '임원 공통' 표기 없음 → 무조건 "고유 책무"
+         (책무에 임원 공통 표기가 있으면 대표이사 겸직 케이스로 가드 우회)
       2. 태그로 명시된 타입 → 그대로
       3. 마지막 블록 + 공통책무 키워드 → "공통 책무"
       4. 기본 → "고유 책무"
     """
-    if is_ceo:
+    if is_ceo and not resp_has_common:
         return "고유 책무"
     if explicit in ("고유 책무", "공통 책무"):
         return explicit  # type: ignore[return-value]
@@ -442,9 +453,15 @@ def normalize(raw: RawDocument) -> ParsedDocument:
             if resp_table
             else ("", "", [])
         )
+        resp_has_common = any(
+            _COMMON_RESP_MARKER.search(r.category or "") for r in responsibilities
+        )
         obligations = (
             _parse_obligation(
-                obligation_table, fields["position"], obligation_table.source_index
+                obligation_table,
+                fields["position"],
+                obligation_table.source_index,
+                resp_has_common,
             )
             if obligation_table
             else []
