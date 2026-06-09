@@ -33,6 +33,40 @@ TEMPLATE_NAME_EXEC = "임원_템플릿"
 SHEET_NAME_MAX = 31
 TEXT_FMT = "@"
 
+# MS949(CP949) 호환 + 가운뎃점 통일 치환표.
+# - 가운뎃점 변형은 모두 · (U+00B7, CP949 0xA1A4)로
+# - CP949 매핑 없는 곡선 따옴표/비표준 공백은 ASCII로
+# - 보이지 않는 zero-width 류는 제거
+# em/en dash(—–), 줄임표(…) 등 CP949에 매핑된 것은 그대로 보존
+_SANITIZE_MAP = str.maketrans({
+    "∙": "·",  # ∙ BULLET OPERATOR
+    "•": "·",  # • BULLET
+    "‧": "·",  # ‧ HYPHENATION POINT
+    "⋅": "·",  # ⋅ DOT OPERATOR
+    "·": "·",  # · GREEK ANO TELEIA (시각적으로 동일)
+    "・": "·",  # ・ KATAKANA MIDDLE DOT
+    "･": "·",  # ・ HALFWIDTH KATAKANA MIDDLE DOT
+    "ㆍ": "·",  # ㆍ HANGUL LETTER ARAEA — 일관성 위해 통일
+    "“": '"',       # " LEFT DOUBLE QUOTATION
+    "”": '"',       # " RIGHT DOUBLE QUOTATION
+    "‘": "'",       # ' LEFT SINGLE QUOTATION
+    "’": "'",       # ' RIGHT SINGLE QUOTATION
+    " ": " ",       # NBSP
+    " ": " ",       # NARROW NO-BREAK SPACE
+    " ": " ",       # THIN SPACE
+    "​": "",        # ZERO WIDTH SPACE
+    "‌": "",        # ZERO WIDTH NON-JOINER
+    "‍": "",        # ZERO WIDTH JOINER
+    "﻿": "",        # BOM / ZERO WIDTH NO-BREAK SPACE
+})
+
+
+def _sanitize(text: str) -> str:
+    """MS949 비호환·가운뎃점 변형을 안전한 형태로 치환. None은 그대로."""
+    if not text:
+        return text
+    return text.translate(_SANITIZE_MAP)
+
 
 @dataclass(frozen=True)
 class TemplateLayout:
@@ -100,7 +134,7 @@ def _plan_sheet_names(executives: list[Executive]) -> list[str]:
     result: list[str] = []
     for exec_, base in zip(executives, base_names):
         if counts[base] > 1:
-            combined = f"{base} - {exec_.name}"
+            combined = f"{base} - {_sanitize(exec_.name)}"
             result.append(combined[:SHEET_NAME_MAX])
         else:
             seen[base] = seen.get(base, 0) + 1
@@ -112,7 +146,7 @@ def _plan_sheet_names(executives: list[Executive]) -> list[str]:
 
 
 def _sheet_name_from_position(position: str) -> str:
-    name = position.replace("\n", ", ").strip()
+    name = _sanitize(position).replace("\n", ", ").strip()
     # Excel 시트명 금지 문자
     for bad in ("\\", "/", "*", "[", "]", ":", "?"):
         name = name.replace(bad, "")
@@ -251,7 +285,7 @@ def _insert_rows_with_style(
 # ---------------------------------------------------------------------------
 def _set(ws: Worksheet, row: int, col: int, value: str | None) -> None:
     cell = ws.cell(row=row, column=col)
-    cell.value = value if value else None
+    cell.value = _sanitize(value) if value else None
     cell.number_format = TEXT_FMT
     # 기존 alignment 속성(수평/수직 정렬 등) 유지하면서 wrap_text만 활성화
     existing = cell.alignment
