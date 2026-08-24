@@ -121,6 +121,9 @@ _STAGE1_MISSING_RATIO_ERROR = 0.05  # 5% 이상 누락 → 오류
 _STAGE3_SIMILARITY_WARN = 0.55
 _STAGE3_SIMILARITY_ERROR = 0.30
 _MAX_MISSING_ISSUE_PER_STAGE = 10
+# Stage 4 원본 누락 추정: 임원 한 명에서 이 건수 이상 뭉텅이로 빠지면 원본이 안 적은
+# 게 아니라 파싱 누락(예: 자동번호 제목이 세부항목으로 흡수)일 가능성이 높아 warn 승격.
+_STAGE4_MISSING_PER_EXEC_WARN = 3
 
 
 def validate(
@@ -362,6 +365,8 @@ def _run_stage4(parsed: ParsedDocument, report: ValidationReport) -> None:
       세부 한 줄이 bold 잡티로 제목으로 오승격된 경우(예: KDB IT부문장).
     - **원본 누락 추정(info)**: 대응하는 관리의무 제목이 없는 책무세부.
       원본이 해당 책무의 관리의무를 적지 않은 경우(예: IBK 동산/부동산).
+      단, 한 임원에서 `_STAGE4_MISSING_PER_EXEC_WARN`건 이상이면 파싱 누락 의심으로
+      집계 이슈를 **warn**으로 승격(예: 라이나 2026-07 Word 자동번호 제목 흡수).
     - **비동일 대응(info)**: 대응되긴 하나 책무세부와 관리의무 책무명이 글자 단위로
       다른 경우. ICR은 둘을 정확 일치 키로 조인하므로 비동일이면 다운스트림 조인이
       깨진다. 어미 차이(예: '관리책임' vs '관리에 대한 책임')부터 원문 자체의 표현
@@ -373,6 +378,7 @@ def _run_stage4(parsed: ParsedDocument, report: ValidationReport) -> None:
     oversplit: list[ValidationIssue] = []
     missing: list[ValidationIssue] = []
     nonidentical: list[ValidationIssue] = []
+    missing_heavy: list[str] = []  # 임원당 누락 건수가 임계치 이상인 직책
 
     for e in parsed.executives:
         resp_details = [d for r in e.responsibilities for d in r.details]
@@ -394,6 +400,7 @@ def _run_stage4(parsed: ParsedDocument, report: ValidationReport) -> None:
                     context=pos,
                 ))
 
+        missing_before = len(missing)
         for d in resp_details:
             if not _stage4_has_match(d, obl_titles):
                 missing.append(ValidationIssue(
@@ -413,6 +420,9 @@ def _run_stage4(parsed: ParsedDocument, report: ValidationReport) -> None:
                     f"책무세부 «{_truncate(d, 70)}» ↔ 관리의무 «{_truncate(best, 70)}»",
                     context=pos,
                 ))
+        exec_missing = len(missing) - missing_before
+        if exec_missing >= _STAGE4_MISSING_PER_EXEC_WARN:
+            missing_heavy.append(f"{pos} {exec_missing}건")
 
     report.stage4_oversplit_count = len(oversplit)
     report.stage4_missing_count = len(missing)
@@ -423,7 +433,14 @@ def _run_stage4(parsed: ParsedDocument, report: ValidationReport) -> None:
             4, "warn", f"Stage 4 — 관리의무 제목 오추출 의심 {len(oversplit)}건"
         ))
         report.issues.extend(oversplit[:_MAX_MISSING_ISSUE_PER_STAGE])
-    if missing:
+    if missing_heavy:
+        report.issues.append(ValidationIssue(
+            4, "warn",
+            f"Stage 4 — 원본 관리의무 누락 추정 {len(missing)}건 — 임원당 "
+            f"{_STAGE4_MISSING_PER_EXEC_WARN}건 이상 뭉텅이 누락 {len(missing_heavy)}명 "
+            f"(파싱 누락 의심: {', '.join(missing_heavy[:5])})"
+        ))
+    elif missing:
         report.issues.append(ValidationIssue(
             4, "info", f"Stage 4 — 원본 관리의무 누락 추정 {len(missing)}건"
         ))

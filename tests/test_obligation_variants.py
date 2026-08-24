@@ -163,3 +163,43 @@ def test_parse_obligation_number_mode_uses_position_classification():
     assert len(obligations) == 2
     assert obligations[0].type == "고유 책무"
     assert obligations[1].type == "공통 책무"
+
+
+# ---------------------------------------------------------------------------
+# Word 자동번호(numPr) — 텍스트에 번호가 없고 RawParagraph.is_numbered 로만 표시
+# (라이나 2026-07 문서: 공통 책무 ①~⑤가 자동번호라 1블록으로 뭉치던 회귀)
+# ---------------------------------------------------------------------------
+def _auto_numbered_cell() -> RawCell:
+    paras = [
+        RawParagraph(text="<고유 책무>"),
+        RawParagraph(text="① 고유 제목 (문자 번호)"),
+        RawParagraph(text="고유 세부"),
+        RawParagraph(text="<공통 책무>"),
+        RawParagraph(text="공통 제목 A", is_numbered=True),
+        RawParagraph(text="공통 세부 A-1"),
+        RawParagraph(text="공통 세부 A-2"),
+        RawParagraph(text="공통 제목 B", is_numbered=True),
+        RawParagraph(text="공통 세부 B-1"),
+    ]
+    return RawCell(text="\n".join(p.text for p in paras), paragraphs=paras)
+
+
+def test_split_by_tag_honors_auto_numbering():
+    blocks = _split_by_tag(_auto_numbered_cell().paragraphs)
+    assert [(t, title, items) for t, title, items in blocks] == [
+        ("고유 책무", "고유 제목 (문자 번호)", ["고유 세부"]),
+        ("공통 책무", "공통 제목 A", ["공통 세부 A-1", "공통 세부 A-2"]),
+        ("공통 책무", "공통 제목 B", ["공통 세부 B-1"]),
+    ]
+
+
+def test_mode_number_detected_by_auto_numbering_only():
+    paras = [
+        RawParagraph(text="제목 1", is_numbered=True),
+        RawParagraph(text="세부"),
+        RawParagraph(text="제목 2", is_numbered=True),
+    ]
+    cell = RawCell(text="", paragraphs=paras)
+    assert _detect_obligation_mode(cell) == "number"
+    blocks = _split_by_number(paras)
+    assert [b[1] for b in blocks] == ["제목 1", "제목 2"]

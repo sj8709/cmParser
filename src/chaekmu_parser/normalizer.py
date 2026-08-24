@@ -311,9 +311,20 @@ def _detect_obligation_mode(cell) -> str:
     joined = "\n".join(p.text for p in cell.paragraphs)
     if _TAG_PATTERN.search(joined):
         return "tag"
-    if any(_NUMBER_PREFIX.match(p.text) for p in cell.paragraphs if p.text.strip()):
+    if any(_is_number_line(p) for p in cell.paragraphs if p.text.strip()):
         return "number"
     return "bold"  # 폴백: 구분자 없는 평문 → 단일 블록으로 처리
+
+
+def _is_number_line(p) -> bool:
+    """번호 라인 판정: 텍스트 번호 접두어 또는 Word 자동번호(is_numbered)."""
+    return bool(_NUMBER_PREFIX.match(p.text)) or getattr(p, "is_numbered", False)
+
+
+def _strip_number(p) -> str:
+    text = p.text.strip()
+    m = _NUMBER_PREFIX.match(text)
+    return text[m.end():].strip() if m else text
 
 
 def _split_by_bold(paragraphs) -> list[_Block]:
@@ -365,10 +376,9 @@ def _split_by_tag(paragraphs) -> list[_Block]:
             flush()
             current_type = f"{tag_m.group(1)} 책무"
             continue
-        num_m = _NUMBER_PREFIX.match(text)
-        if num_m:
+        if _is_number_line(p):
             flush()
-            current_title = text[num_m.end():].strip()
+            current_title = _strip_number(p)
         else:
             if current_title is None:
                 current_title = text
@@ -387,11 +397,10 @@ def _split_by_number(paragraphs) -> list[_Block]:
         text = p.text.strip()
         if not text:
             continue
-        num_m = _NUMBER_PREFIX.match(text)
-        if num_m:
+        if _is_number_line(p):
             if current_title is not None:
                 blocks.append((None, current_title, current_items))
-            current_title = text[num_m.end():].strip()
+            current_title = _strip_number(p)
             current_items = []
         else:
             if current_title is None:

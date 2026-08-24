@@ -22,6 +22,7 @@ ObligationType = Literal["고유 책무", "공통 책무"]
 class RawParagraph:
     text: str
     is_bold: bool = False
+    is_numbered: bool = False  # Word 자동번호(numPr, bullet 제외) — 텍스트에 번호가 없음
 
 
 @dataclass

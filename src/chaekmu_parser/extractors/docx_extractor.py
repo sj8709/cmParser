@@ -6,6 +6,8 @@ DOCX extractor — python-docx 기반.
   - 각 셀: paragraphs(텍스트+bold 플래그) + 중첩 테이블 보존
   - Merged cell dedup: 같은 <w:tc> 엘리먼트가 여러 번 노출되는 경우 1회만 유지
   - text/is_bold는 단락 결합 결과로 채움 (하위 호환)
+  - 단락의 Word 자동번호(w:numPr)는 텍스트에 번호가 없으므로 is_numbered 플래그로 보존
+    (numFmt=bullet은 세부항목 글머리표이므로 제외)
 """
 
 from __future__ import annotations
@@ -13,6 +15,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from docx import Document
+from docx.oxml.ns import qn
 from docx.table import Table as DocxTable
 from docx.table import _Cell as DocxCell
 
@@ -37,6 +40,7 @@ class DocxExtractor(BaseExtractor):
 
     def extract(self, file_path: Path) -> RawDocument:
         doc = Document(str(file_path))
+        self._num_formats = self._load_num_formats(doc)
 
         tables = [
             self._convert_table(t, source_index=idx)
@@ -71,7 +75,10 @@ class DocxExtractor(BaseExtractor):
         for p in cell.paragraphs:
             text = p.text
             is_bold = self._para_is_bold(p)
-            paragraphs.append(RawParagraph(text=text, is_bold=is_bold))
+            is_numbered = self._para_is_numbered(p)
+            paragraphs.append(
+                RawParagraph(text=text, is_bold=is_bold, is_numbered=is_numbered)
+            )
 
         joined_text = "\n".join(p.text for p in paragraphs)
         any_bold = any(p.is_bold and p.text.strip() for p in paragraphs)
@@ -87,6 +94,46 @@ class DocxExtractor(BaseExtractor):
             nested_tables=nested_tables,
             paragraphs=paragraphs,
         )
+
+    @staticmethod
+    def _load_num_formats(doc) -> dict[tuple[str, str], str]:
+        """numbering.xml → {(numId, ilvl): numFmt}. 넘버링 파트가 없으면 빈 dict."""
+        try:
+            numbering = doc.part.numbering_part.element
+        except (AttributeError, KeyError, NotImplementedError):
+            return {}
+        abstract_lvls: dict[str, dict[str, str]] = {}
+        for a in numbering.findall(qn("w:abstractNum")):
+            lvls: dict[str, str] = {}
+            for lvl in a.findall(qn("w:lvl")):
+                fmt = lvl.find(qn("w:numFmt"))
+                if fmt is not None:
+                    lvls[lvl.get(qn("w:ilvl"))] = fmt.get(qn("w:val"))
+            abstract_lvls[a.get(qn("w:abstractNumId"))] = lvls
+        result: dict[tuple[str, str], str] = {}
+        for n in numbering.findall(qn("w:num")):
+            aid = n.find(qn("w:abstractNumId"))
+            if aid is None:
+                continue
+            for ilvl, fmt in abstract_lvls.get(aid.get(qn("w:val")), {}).items():
+                result[(n.get(qn("w:numId")), ilvl)] = fmt
+        return result
+
+    def _para_is_numbered(self, p) -> bool:
+        """단락 직접 지정 자동번호(numPr) 중 bullet이 아닌 것만 True."""
+        pPr = p._p.pPr
+        if pPr is None:
+            return False
+        numPr = pPr.find(qn("w:numPr"))
+        if numPr is None:
+            return False
+        num_id = numPr.find(qn("w:numId"))
+        if num_id is None or num_id.get(qn("w:val")) in (None, "0"):
+            return False
+        ilvl = numPr.find(qn("w:ilvl"))
+        ilvl_val = ilvl.get(qn("w:val")) if ilvl is not None else "0"
+        fmt = self._num_formats.get((num_id.get(qn("w:val")), ilvl_val))
+        return fmt is not None and fmt != "bullet"
 
     @staticmethod
     def _para_is_bold(p, threshold: float = 0.5) -> bool:

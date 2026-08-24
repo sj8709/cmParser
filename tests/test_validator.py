@@ -192,6 +192,28 @@ def test_stage4_flags_source_missing_obligation():
     assert not any(i.stage == 4 and i.severity == "error" for i in report.issues)
 
 
+def test_stage4_escalates_bulk_missing_to_warn():
+    """한 임원에서 누락 추정이 임계치(3) 이상 → 집계 이슈 warn 승격.
+    (라이나 2026-07: 자동번호 제목이 세부항목으로 흡수돼 임원당 4~10건씩 뭉텅이 누락)"""
+    e = _exec(
+        resp_details=[
+            "소관 업무 관련 내부통제기준등의 집행·운영에 대한 책임",
+            "소관 업무 관련 보고 및 공시에 대한 책임",
+            "소관 업무 관련 시스템 개발·변경·운영 업무 지원에 대한 책임",
+            "소관 업무 관련 위·수탁 계약 관리에 대한 책임",
+        ],
+        obl_blocks=[
+            ("소관 업무 관련 내부통제기준등의 집행·운영에 대한 책임",
+             ["소관 업무 관련 보고 및 공시 의무", "소관 업무 관련 위·수탁 계약 관리·감독 의무"]),
+        ],
+    )
+    report = validate(_doc(e), _raw_with(["dummy"]), source_path=None)
+    assert report.stage4_missing_count == 3
+    header = [i for i in report.issues if i.stage == 4 and "누락 추정" in i.message and "뭉텅이" in i.message]
+    assert len(header) == 1 and header[0].severity == "warn"
+    assert not any(i.stage == 4 and i.severity == "error" for i in report.issues)
+
+
 def test_stage4_skips_tag_mode_all_empty_items():
     """관리의무 세부항목이 전부 0개(태그/번호 모드) → 검사 생략, 이슈 없음."""
     e = _exec(
