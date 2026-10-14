@@ -64,6 +64,9 @@ _NUMBER_PREFIX = re.compile(
     r")\s*"
 )
 _TAG_PATTERN = re.compile(r"<\s*(고유|공통)\s*책무\s*>")
+# bullet 모드: '■ 제목' + '(1) 세부' (번호는 블록을 넘어 연속됨 → 구분자로만 사용)
+_BULLET_PREFIX = re.compile(r"^\s*■\s*")
+_PAREN_NUMBER_PREFIX = re.compile(r"^\s*\(\s*\d+\s*\)\s*")
 
 
 def _txt(cell: RawCell) -> str:
@@ -276,6 +279,8 @@ def _parse_obligation(
     mode = _detect_obligation_mode(cell)
     if mode == "tag":
         blocks = _split_by_tag(cell.paragraphs)
+    elif mode == "bullet":
+        blocks = _split_by_bullet(cell.paragraphs)
     elif mode == "number":
         blocks = _split_by_number(cell.paragraphs)
     else:  # "bold" (기본) — IBK 스타일
@@ -304,13 +309,15 @@ _Block = tuple[str | None, str, list[str]]
 
 
 def _detect_obligation_mode(cell) -> str:
-    """관리의무 셀의 파싱 모드 결정. 우선순위: bold > tag > number."""
+    """관리의무 셀의 파싱 모드 결정. 우선순위: bold > tag > bullet > number."""
     has_bold = any(p.is_bold and p.text.strip() for p in cell.paragraphs)
     if has_bold:
         return "bold"
     joined = "\n".join(p.text for p in cell.paragraphs)
     if _TAG_PATTERN.search(joined):
         return "tag"
+    if any(_BULLET_PREFIX.match(p.text) for p in cell.paragraphs):
+        return "bullet"
     if any(_is_number_line(p) for p in cell.paragraphs if p.text.strip()):
         return "number"
     return "bold"  # 폴백: 구분자 없는 평문 → 단일 블록으로 처리
@@ -353,7 +360,7 @@ def _split_by_bold(paragraphs) -> list[_Block]:
 def _split_by_tag(paragraphs) -> list[_Block]:
     """
     라이나 스타일: <고유 책무> / <공통 책무> 태그로 타입 구분, 번호 접두어로 항목 구분.
-    각 번호 라인 = 새 블록 (태그 타입 상속).
+    각 번호 라인 = 새 블록 (태그 타입 상속). '■ 제목' + '(n) 세부' 양식도 동일 처리.
     """
     blocks: list[_Block] = []
     current_type: str | None = None
@@ -376,15 +383,40 @@ def _split_by_tag(paragraphs) -> list[_Block]:
             flush()
             current_type = f"{tag_m.group(1)} 책무"
             continue
-        if _is_number_line(p):
+        bullet_m = _BULLET_PREFIX.match(text)
+        if bullet_m or _is_number_line(p):
             flush()
-            current_title = _strip_number(p)
+            current_title = text[bullet_m.end():].strip() if bullet_m else _strip_number(p)
         else:
             if current_title is None:
                 current_title = text
             else:
-                current_items.append(text)
+                current_items.append(_PAREN_NUMBER_PREFIX.sub("", text, count=1))
     flush()
+    return blocks
+
+
+def _split_by_bullet(paragraphs) -> list[_Block]:
+    """'■ 제목' + '(n) 세부' 스타일. ■ 라인 = 새 블록, 나머지 = 세부 ('(n)' 접두사 제거)."""
+    blocks: list[_Block] = []
+    title: str | None = None
+    items: list[str] = []
+    for p in paragraphs:
+        text = p.text.strip()
+        if not text:
+            continue
+        bullet_m = _BULLET_PREFIX.match(text)
+        if bullet_m:
+            if title is not None:
+                blocks.append((None, title, items))
+            title = text[bullet_m.end():].strip()
+            items = []
+        else:
+            if title is None:
+                title = ""
+            items.append(_PAREN_NUMBER_PREFIX.sub("", text, count=1))
+    if title is not None:
+        blocks.append((None, title, items))
     return blocks
 
 

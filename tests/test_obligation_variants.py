@@ -6,6 +6,7 @@ from chaekmu_parser.normalizer import (
     _detect_obligation_mode,
     _parse_obligation,
     _split_by_bold,
+    _split_by_bullet,
     _split_by_number,
     _split_by_tag,
 )
@@ -203,3 +204,47 @@ def test_mode_number_detected_by_auto_numbering_only():
     assert _detect_obligation_mode(cell) == "number"
     blocks = _split_by_number(paras)
     assert [b[1] for b in blocks] == ["제목 1", "제목 2"]
+
+
+# ---------------------------------------------------------------------------
+# bullet 모드 — '■ 제목' + '(n) 세부' (라이나 2026.08 양식)
+# ---------------------------------------------------------------------------
+_BULLET_PARAS = [
+    ("■ 첫 번째 책임", False),
+    ("(1) 세부 A", False),
+    ("(2) 세부 B", False),
+    ("■ 두 번째 책임", False),
+    ("(3) 세부 C", False),
+]
+
+
+def test_obligation_by_bullet_marker():
+    assert classify_table(_table_1x1(_BULLET_PARAS)) == "OBLIGATION"
+
+
+def test_mode_bullet_detected_without_tag_or_bold():
+    assert _detect_obligation_mode(_cell(_BULLET_PARAS)) == "bullet"
+
+
+def test_split_by_bullet_strips_markers_and_paren_numbers():
+    blocks = _split_by_bullet(_cell(_BULLET_PARAS).paragraphs)
+    assert blocks == [
+        (None, "첫 번째 책임", ["세부 A", "세부 B"]),
+        (None, "두 번째 책임", ["세부 C"]),
+    ]
+
+
+def test_split_by_tag_with_bullet_titles():
+    """'■'/'(n)' 양식에 <공통 책무> 태그만 삽입된 경우 — 태그 모드가 ■ 제목을 인식."""
+    paras = [
+        ("■ 고유 책임", False),
+        ("(1) 세부 A", False),
+        ("<공통 책무>", False),
+        ("■ 공통 책임", False),
+        ("(2) 세부 B", False),
+    ]
+    assert _detect_obligation_mode(_cell(paras)) == "tag"
+    assert _split_by_tag(_cell(paras).paragraphs) == [
+        (None, "고유 책임", ["세부 A"]),
+        ("공통 책무", "공통 책임", ["세부 B"]),
+    ]

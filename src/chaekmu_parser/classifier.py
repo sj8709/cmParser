@@ -56,6 +56,8 @@ PATTERN_OBLIGATION_NUMBER = re.compile(
     r"|[ⅠⅡⅢⅣⅤⅥⅦⅧⅨⅩⅪⅫ]\s*[.)]"
     r")"
 )
+# 관리의무 제목 글머리표 — '■ 제목' + '(1) 세부' 스타일 (라이나 2026.08 양식)
+PATTERN_OBLIGATION_BULLET = re.compile(r"(?m)^\s*■")
 
 
 def _norm(text: str) -> str:
@@ -105,6 +107,8 @@ def classify_table(table: RawTable) -> TableType:
         if PATTERN_OBLIGATION_TAG.search(body):
             return "OBLIGATION"
         if PATTERN_OBLIGATION_NUMBER.search(body):
+            return "OBLIGATION"
+        if PATTERN_OBLIGATION_BULLET.search(body):
             return "OBLIGATION"
         # IBK 스타일: bold 단락 존재 (extractor가 is_bold 플래그 세팅 전제)
         if first_row.cells[0].is_bold:
